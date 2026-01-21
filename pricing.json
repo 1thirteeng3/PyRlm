@@ -1,0 +1,33 @@
+{
+  "_metadata": {
+    "version": "1.0",
+    "last_updated": "2026-01-21",
+    "source": "official_pricing_pages"
+  },
+  "models": {
+    "gpt-4-turbo": {
+      "input_cost_per_m": 10.00,
+      "output_cost_per_m": 30.00
+    },
+    "gpt-4o": {
+      "input_cost_per_m": 5.00,
+      "output_cost_per_m": 15.00
+    },
+    "gpt-4o-mini": {
+      "input_cost_per_m": 0.15,
+      "output_cost_per_m": 0.60
+    },
+    "claude-3-opus": {
+      "input_cost_per_m": 15.00,
+      "output_cost_per_m": 75.00
+    },
+    "claude-3-sonnet": {
+      "input_cost_per_m": 3.00,
+      "output_cost_per_m": 15.00
+    },
+    "gemini-1.5-pro": {
+      "input_cost_per_m": 3.50,
+      "output_cost_per_m": 10.50
+    }
+  }
+}
