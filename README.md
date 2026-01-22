@@ -1,19 +1,91 @@
-# RLM-Python 🔒🤖
+<p align="center">
+  <h1 align="center">🛡️ RLM-Python</h1>
+  <p align="center">
+    <strong>Secure Code Execution for AI Agents</strong>
+  </p>
+  <p align="center">
+    Replace unsafe <code>exec()</code> with Docker sandboxes, gVisor isolation, and real-time data leak prevention.
+  </p>
+</p>
 
-**Recursive Language Model** - A secure Python library for LLM-driven code execution with Docker sandboxing, egress filtering, and memory-efficient context handling.
+<p align="center">
+  <a href="https://pypi.org/project/rlm-python/"><img src="https://img.shields.io/pypi/v/rlm-python?style=flat-square&color=blue" alt="PyPI Version"></a>
+  <a href="https://pypi.org/project/rlm-python/"><img src="https://img.shields.io/pypi/pyversions/rlm-python?style=flat-square" alt="Python Versions"></a>
+  <a href="https://github.com/1thirteeng3/PyRlm/actions"><img src="https://img.shields.io/github/actions/workflow/status/1thirteeng3/PyRlm/ci-quality.yml?style=flat-square&label=tests" alt="Build Status"></a>
+  <a href="https://github.com/1thirteeng3/PyRlm/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="License"></a>
+  <a href="#security"><img src="https://img.shields.io/badge/security-gVisor%20enabled-success?style=flat-square" alt="gVisor"></a>
+</p>
 
-[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+---
 
-## 🌟 Features
+## 🎬 See It In Action
 
-- **🐳 Docker Sandbox Execution** - Execute untrusted code in isolated containers with gVisor support
-- **🔐 OS-Level Security** - Network isolation, memory limits, process limits, privilege restrictions
-- **🛡️ Egress Filtering** - Prevent data exfiltration via entropy detection and pattern matching
-- **📚 Memory-Efficient Context** - Handle gigabyte-scale files with mmap-based `ContextHandle`
-- **🤖 Multi-Provider LLM** - Support for OpenAI, Anthropic, and Google Gemini
-- **💰 Budget Management** - Track API costs and enforce spending limits
-- **📝 Typed & Tested** - Full type hints with comprehensive test coverage
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ $ python demo.py                                                │
+│                                                                 │
+│ 🤖 Agent: Attempting to read environment variables...           │
+│ 📝 Code: import os; print(os.environ.get('API_KEY'))            │
+│                                                                 │
+│ 🛡️ [SECURITY REDACTION: Secret Pattern Detected]                │
+│    Egress filter blocked potential API key exfiltration.        │
+│                                                                 │
+│ 🤖 Agent: Let me calculate fibonacci instead...                 │
+│ 📝 Code: def fib(n): return n if n < 2 else fib(n-1) + fib(n-2) │
+│          print(f"FINAL({fib(10)})")                             │
+│                                                                 │
+│ ✅ Result: 55                                                   │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**RLM v3.0**: Blocking data exfiltration in real-time while enabling legitimate computation.
+
+---
+
+## 🎯 The Problem
+
+Every AI agent framework has the same vulnerability: **unrestricted code execution**.
+
+```python
+# ❌ What most frameworks do (DANGEROUS!)
+exec(llm_generated_code)  # Full access to your system
+
+# ❌ Subprocess isn't better
+subprocess.run(["python", "-c", code])  # Still on your host
+```
+
+**The risks:**
+- 🔓 Access to environment variables (API keys, secrets)
+- 📁 Read/write to your filesystem
+- 🌐 Network requests to exfiltrate data
+- 💣 Fork bombs, crypto miners, ransomware
+
+---
+
+## ✅ The Solution: RLM-Python
+
+```python
+# ✅ RLM: Secure by design
+from rlm import Orchestrator
+
+agent = Orchestrator()
+result = await agent.arun("Analyze this data and find trends")
+
+print(result.final_answer)  # Safe output, guaranteed
+```
+
+### Why RLM?
+
+| Feature | `exec()` / `eval()` | LangChain REPL | **RLM v3.0** |
+|---------|:-------------------:|:--------------:|:------------:|
+| **Isolation** | ❌ None (Host) | ⚠️ Limited | ✅ Docker + gVisor |
+| **Network** | 🔓 Open | 🔓 Open | 🔒 Blocked by Default |
+| **Concurrency** | ❌ Blocking | ❌ Blocking | ✅ Native AsyncIO |
+| **Data Leak Prevention** | ❌ None | ❌ None | ✅ Egress Filtering |
+| **Binary Detection** | ❌ None | ❌ None | ✅ Fail-Fast |
+| **Resource Limits** | ❌ None | ❌ None | ✅ Memory/CPU/PIDs |
+
+---
 
 ## 🚀 Quick Start
 
@@ -23,220 +95,243 @@
 pip install rlm-python
 ```
 
-Or install from source:
+### Prerequisites
+
+> ⚠️ **Docker Engine is required.** RLM executes code in isolated containers.
 
 ```bash
-git clone https://github.com/rlm-python/rlm.git
-cd rlm
-pip install -e ".[dev]"
+# Verify Docker is running
+docker --version
 ```
 
-### Basic Usage
+### Optional: Enable gVisor (Recommended for Production)
+
+gVisor provides kernel-level syscall interception for maximum security.
+
+```bash
+# Install gVisor runtime
+curl -fsSL https://gvisor.dev/archive.key | sudo gpg --dearmor -o /usr/share/keyrings/gvisor-archive-keyring.gpg
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/gvisor-archive-keyring.gpg] https://storage.googleapis.com/gvisor/releases release main" | sudo tee /etc/apt/sources.list.d/gvisor.list > /dev/null
+sudo apt-get update && sudo apt-get install -y runsc
+
+# Configure Docker to use gVisor
+sudo runsc install
+sudo systemctl restart docker
+```
+
+---
+
+## 💻 Usage Examples
+
+### Modern Async/Await (Recommended)
 
 ```python
-from rlm import Orchestrator, settings
+import asyncio
+from rlm import Orchestrator
 
-# Configure via environment variables or .env file
-# RLM_API_KEY=sk-...
-# RLM_API_PROVIDER=openai
+async def main():
+    # Initialize the orchestrator (connects to Docker via aiodocker)
+    agent = Orchestrator()
+    
+    # Execute non-blocking - perfect for web servers
+    result = await agent.arun(
+        "Calculate the first 20 prime numbers and return as a list"
+    )
+    
+    print(f"Success: {result.success}")
+    print(f"Answer: {result.final_answer}")
+    print(f"Iterations: {result.iterations}")
 
-# Create orchestrator
-orchestrator = Orchestrator()
-
-# Run a query with code execution
-result = orchestrator.run("Calculate the first 10 prime numbers")
-
-print(result.final_answer)
-# [2, 3, 5, 7, 11, 13, 17, 19, 23, 29]
-
-print(f"Cost: ${result.budget_summary['total_spent_usd']:.4f}")
+if __name__ == "__main__":
+    asyncio.run(main())
 ```
 
-### With Context File
+### Synchronous (For Scripts)
 
 ```python
 from rlm import Orchestrator
 
+agent = Orchestrator()
+result = agent.run("What is 2 + 2?")
+
+print(result.final_answer)  # "4"
+```
+
+### With Large Context Files (Big Data)
+
+```python
+from rlm import Orchestrator
+
+# Load a 1GB CSV - uses mmap for memory efficiency
+# The LLM never reads the entire file, only snippets
+result = agent.run(
+    query="Find the top 10 customers by revenue",
+    context_path="./sales_data_1gb.csv"
+)
+```
+
+### FastAPI Integration
+
+```python
+from fastapi import FastAPI
+from rlm import Orchestrator
+
+app = FastAPI()
 orchestrator = Orchestrator()
 
-# Query against a large document
-result = orchestrator.run(
-    "Find all email addresses mentioned in this document",
-    context_path="/path/to/large_document.txt"
-)
-
-print(result.final_answer)
+@app.post("/execute")
+async def execute_code(query: str):
+    # Non-blocking! Other requests proceed while this runs
+    result = await orchestrator.arun(query)
+    return {"answer": result.final_answer}
 ```
 
-### Direct Sandbox Usage
-
-```python
-from rlm import DockerSandbox
-
-sandbox = DockerSandbox()
-
-result = sandbox.execute("""
-import math
-print(f"Pi = {math.pi}")
-print(f"Factorial of 10 = {math.factorial(10)}")
-""")
-
-print(result.stdout)
-# Pi = 3.141592653589793
-# Factorial of 10 = 3628800
-```
-
-### Memory-Efficient Context Handling
-
-```python
-from rlm import ContextHandle
-
-# Work with large files without loading into memory
-with ContextHandle("/path/to/10gb_file.txt") as ctx:
-    print(f"File size: {ctx.size_mb:.2f} MB")
-    
-    # Search using regex
-    matches = ctx.search(r"API_KEY=\w+")
-    
-    for offset, match in matches:
-        # Read context around match
-        snippet = ctx.snippet(offset, window=200)
-        print(f"Found at {offset}: {snippet}")
-```
-
-## ⚙️ Configuration
-
-RLM is configured via environment variables (with `RLM_` prefix) or a `.env` file:
-
-```bash
-# API Configuration
-RLM_API_PROVIDER=openai          # openai, anthropic, google
-RLM_API_KEY=sk-...               # Your API key
-RLM_MODEL_NAME=gpt-4o            # Model to use
-
-# Execution Configuration  
-RLM_EXECUTION_MODE=docker        # docker or local (dev only)
-RLM_DOCKER_RUNTIME=auto          # auto, runsc, or runc
-RLM_EXECUTION_TIMEOUT=30         # Seconds
-
-# Safety Limits
-RLM_COST_LIMIT_USD=5.0           # Max spending per session
-RLM_MAX_RECURSION_DEPTH=5        # Max code execution iterations
-
-# Security Settings
-RLM_MEMORY_LIMIT=512m            # Container memory limit
-RLM_NETWORK_ENABLED=false        # Network access (DANGEROUS if true)
-RLM_ENTROPY_THRESHOLD=4.5        # Secret detection threshold
-```
+---
 
 ## 🔒 Security Architecture
 
-RLM v2.0 implements **defense in depth** with multiple security layers:
+RLM implements **Defense in Depth** with 5 security layers:
 
-### 1. Runtime Isolation
-- **gVisor (runsc)** - Intercepts syscalls in userspace, isolating from host kernel
-- **Automatic fallback** - Falls back to runc with seccomp if gVisor unavailable
-
-### 2. Network Isolation
-- `network_mode="none"` - Container has no network access
-- Prevents data exfiltration via HTTP/DNS
-
-### 3. Resource Limits
-- **Memory**: 512MB default (prevents OOM attacks)
-- **PIDs**: 50 max (prevents fork bombs)
-- **CPU**: 1 core quota (prevents crypto mining)
-
-### 4. Egress Filtering
-- **Shannon Entropy** - Detects high-entropy data (secrets, keys)
-- **Pattern Matching** - Recognizes API keys, JWT, private keys
-- **Context Echo** - Prevents printing raw context back
-
-### 5. Privilege Restrictions
-- `no-new-privileges` - Blocks privilege escalation
-- `ipc_mode="none"` - Isolates IPC namespace
-
-## 📊 API Reference
-
-### Orchestrator
-
-```python
-class Orchestrator:
-    def run(query: str, context_path: str = None) -> OrchestratorResult
-    def chat(message: str) -> str
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    YOUR APPLICATION                          │
+├─────────────────────────────────────────────────────────────┤
+│  L5: APPLICATION    │  Egress Filtering                     │
+│                     │  • Shannon entropy detection          │
+│                     │  • Secret pattern matching (API keys) │
+│                     │  • Binary magic byte detection        │
+├─────────────────────────────────────────────────────────────┤
+│  L4: FILESYSTEM     │  Ephemeral Execution                  │
+│                     │  • TemporaryDirectory (auto-cleanup)  │
+│                     │  • Read-only volume mounts            │
+│                     │  • No persistent state                │
+├─────────────────────────────────────────────────────────────┤
+│  L3: NETWORK        │  Air-Gapped by Default                │
+│                     │  • network_mode="none"                │
+│                     │  • Zero outbound connections          │
+├─────────────────────────────────────────────────────────────┤
+│  L2: KERNEL         │  Syscall Interception (gVisor)        │
+│                     │  • Blocks dangerous syscalls          │
+│                     │  • Sandboxed kernel interface         │
+├─────────────────────────────────────────────────────────────┤
+│  L1: CONTAINER      │  Namespace Isolation (Docker)         │
+│                     │  • Memory limits (default: 256MB)     │
+│                     │  • CPU limits (default: 0.5 cores)    │
+│                     │  • PID limits (default: 50)           │
+│                     │  • no-new-privileges                  │
+└─────────────────────────────────────────────────────────────┘
 ```
 
-### DockerSandbox
+### Fail-Closed Policy
+
+RLM **refuses to execute** if gVisor is not detected:
 
 ```python
-class DockerSandbox:
-    def execute(code: str, context_mount: str = None) -> ExecutionResult
-    def validate_security() -> dict
+# This will FAIL if gVisor is not installed
+agent = Orchestrator()
+result = agent.run("print('hello')")  # SecurityViolationError!
+
+# Explicit opt-in for reduced security (NOT RECOMMENDED)
+from rlm.core.repl import SandboxConfig
+config = SandboxConfig(allow_unsafe_runtime=True)
 ```
 
-### ContextHandle
+This is **intentional**. We believe security should be the default, not an option.
 
-```python
-class ContextHandle:
-    size: int                    # File size in bytes
-    size_mb: float              # File size in MB
-    
-    def search(pattern: str) -> List[Tuple[int, str]]
-    def read_window(offset: int, radius: int = 500) -> str
-    def snippet(offset: int, window: int = 500) -> str
-    def head(n_bytes: int = 1000) -> str
-    def tail(n_bytes: int = 1000) -> str
-    def iterate_lines(start_line: int = 1) -> Iterator
-```
+---
 
-### EgressFilter
+## ⚙️ Configuration
 
-```python
-class EgressFilter:
-    def filter(output: str, raise_on_leak: bool = False) -> str
-    def check_entropy(text: str) -> Tuple[bool, float]
-    def check_secrets(text: str) -> List[Tuple[str, str]]
-```
-
-## 🧪 Testing
+Environment variables for customization:
 
 ```bash
-# Run all tests
-pytest
+# Docker
+RLM_DOCKER_IMAGE=python:3.11-slim
+RLM_DOCKER_RUNTIME=auto  # auto | runsc | runc
 
-# Run unit tests only
-pytest tests/unit/ -v
+# Limits
+RLM_MEMORY_LIMIT=256m
+RLM_CPU_LIMIT=0.5
+RLM_PIDS_LIMIT=50
+RLM_EXECUTION_TIMEOUT=30
 
-# Run security tests (requires Docker)
-pytest tests/security/ -v -m security
+# Security
+RLM_ALLOW_UNSAFE_RUNTIME=0  # Set to 1 to allow without gVisor
+RLM_NETWORK_ENABLED=0       # Set to 1 to enable network (risky!)
 
-# With coverage
-pytest --cov=rlm --cov-report=html
+# Egress
+RLM_ENTROPY_THRESHOLD=4.5   # Shannon entropy for secret detection
+RLM_MAX_STDOUT_BYTES=4000   # Truncate large outputs
+
+# LLM
+RLM_LLM_PROVIDER=openai
+RLM_LLM_MODEL=gpt-4
+OPENAI_API_KEY=sk-...
 ```
 
-## 📁 Project Structure
+---
 
-```
-src/rlm/
-├── config/          # Pydantic Settings configuration
-├── core/
-│   ├── memory/      # ContextHandle for large files
-│   ├── repl/        # Docker sandbox execution
-│   ├── exceptions.py
-│   └── orchestrator.py
-├── llm/             # Multi-provider LLM clients
-├── security/        # Egress filtering
-├── utils/           # Cost management
-└── prompt_templates/
-```
+## 📖 Documentation
+
+**[📚 Read the Full Documentation](https://rlm-python.readthedocs.io)**
+
+- [Configuration Reference](https://rlm-python.readthedocs.io/configuration)
+- [Custom Docker Images](https://rlm-python.readthedocs.io/custom-images)
+- [LangChain Integration](https://rlm-python.readthedocs.io/integrations/langchain)
+- [FastAPI Best Practices](https://rlm-python.readthedocs.io/integrations/fastapi)
+
+---
+
+## 🗺️ Roadmap
+
+**v3.0** - Stable Release ✅
+
+- [x] DRY Architecture (Single Source of Truth)
+- [x] Strict mistletoe parsing (no regex fallback)
+- [x] TemporaryDirectory for crash-safe cleanup
+- [x] CPU offloading via ThreadPoolExecutor
+- [x] Binary file detection in ContextHandle
+
+**Future**
+
+- [ ] Kubernetes support (K8s Jobs)
+- [ ] Official CrewAI integration
+- [ ] WebAssembly runtime option
+- [ ] Multi-language support (JavaScript, Rust)
+
+---
 
 ## 🤝 Contributing
 
-Contributions are welcome! Please read our contributing guidelines and submit pull requests.
+We welcome contributions, especially security improvements!
 
-## 📜 License
+```bash
+# Clone and setup
+git clone https://github.com/1thirteeng3/PyRlm.git
+cd PyRlm
+pip install -e ".[dev]"
+
+# Run tests
+pytest tests/unit/ -v
+
+# Run security tests (requires Docker + gVisor)
+pytest tests/integration/ -v -m security
+```
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+
+---
+
+## 📄 License
 
 MIT License - see [LICENSE](LICENSE) for details.
 
-## 🙏 Acknowledgments
+---
 
-Built following the security principles outlined in RFC-002 for hardened LLM code execution.
+<p align="center">
+  <strong>Built with 🛡️ for the AI Agent community</strong>
+  <br>
+  <a href="https://github.com/1thirteeng3/PyRlm">GitHub</a> •
+  <a href="https://pypi.org/project/rlm-python/">PyPI</a> •
+  <a href="https://rlm-python.readthedocs.io">Docs</a>
+</p>
