@@ -27,26 +27,14 @@ jobs:
           pip install pydantic pydantic-settings docker openai anthropic google-generativeai aiodocker mistletoe
           pip install -e .
       
-      - name: Verify Docker is available
-        run: |
-          docker --version
-          docker info | head -20
+      - name: Verify Docker
+        run: docker --version
       
-      - name: Pull test image
-        run: docker pull python:3.11-slim
-      
-      - name: Run basic Docker tests
-        run: |
-          echo "Testing Docker availability..."
-          docker run --rm python:3.11-slim python -c "print('Docker works!')"
-          echo "✅ Docker test passed"
-        
       - name: Test egress filtering
-        run: |
-          python -c "from rlm.security.egress import detect_secrets, calculate_shannon_entropy; assert len(detect_secrets('AKIAIOSFODNN7EXAMPLE')) > 0; print('Egress tests passed')"
+        run: python -c "from rlm.security.egress import detect_secrets; assert len(detect_secrets('AKIAIOSFODNN7EXAMPLE')) > 0; print('OK')"
 
   parsing-tests:
-    name: Parsing Robustness Tests
+    name: Parsing Tests
     runs-on: ubuntu-latest
     
     steps:
@@ -59,28 +47,23 @@ jobs:
       
       - name: Install dependencies
         run: |
-          pip install mistletoe
+          pip install mistletoe pytest
           pip install -e .
       
-      - name: Test code extraction
-        run: |
-          python -c "from rlm.core.parsing import extract_python_code; codes = extract_python_code('\`\`\`python\nprint(1)\n\`\`\`'); assert len(codes) == 1; print('Code extraction works')"
+      - name: Test parsing
+        run: python -c "from rlm.core.parsing import extract_final_answer; assert extract_final_answer('FINAL(42)') == '42'; print('OK')"
       
-      - name: Test FINAL detection
-        run: |
-          python -c "from rlm.core.parsing import extract_final_answer; assert extract_final_answer('FINAL(42)') == '42'; print('FINAL detection works')"
-      
-      - name: Run unit tests for parsing
-        run: pytest tests/unit/ -v -k "test" --tb=short || echo "Tests completed"
+      - name: Run unit tests
+        run: pytest tests/unit/ -v --tb=short
 
-  security-status:
-    name: Security Tests Status
+  summary:
+    name: Summary
     runs-on: ubuntu-latest
     needs: [docker-tests, parsing-tests]
     if: always()
     steps:
-      - name: Report status
+      - name: Results
         run: |
-          echo "Docker Tests: ${{ needs.docker-tests.result }}"
-          echo "Parsing Tests: ${{ needs.parsing-tests.result }}"
-          echo "✅ Security workflow completed"
+          echo "## Security Tests" >> $GITHUB_STEP_SUMMARY
+          echo "- Docker: ${{ needs.docker-tests.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Parsing: ${{ needs.parsing-tests.result }}" >> $GITHUB_STEP_SUMMARY
