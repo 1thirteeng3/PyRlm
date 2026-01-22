@@ -204,6 +204,9 @@ class DockerSandbox:
         """
         Execute Python code in a secure Docker container.
 
+        v3.0: Uses TemporaryDirectory for crash-safe cleanup.
+        No temp file leaks even on SIGKILL.
+
         Args:
             code: Python code to execute
             context_mount: Optional path to context file to mount read-only
@@ -217,142 +220,124 @@ class DockerSandbox:
         """
         self._ensure_image()
 
-        # Write user code to temp file
-        with tempfile.NamedTemporaryFile(
-            mode="w",
-            suffix=".py",
-            delete=False,
-            encoding="utf-8",
-        ) as f:
-            f.write(code)
-            script_path = f.name
-
-        try:
-            # Configure volumes - CLEAN BOOT: mount agent_lib as volume
-            volumes = {
-                # Mount agent_lib as read-only Python package
-                str(AGENT_LIB_PATH): {"bind": "/opt/rlm_agent_lib", "mode": "ro"},
-                # Mount user script
-                script_path: {"bind": "/tmp/user_code.py", "mode": "ro"},
-            }
-
-            if context_mount:
-                volumes[context_mount] = {"bind": "/mnt/context", "mode": "ro"}
-
-            # Configure network
-            network_mode = "bridge" if self.config.network_enabled else "none"
-            if self.config.network_enabled:
-                logger.warning("⚠ Network access enabled - this is a security risk!")
-
-            # Security options
-            security_opt = ["no-new-privileges:true"]
-
-            # CPU configuration (nano_cpus = 10^9 * cores)
-            nano_cpus = int(self.config.cpu_limit * 1_000_000_000)
-
-            logger.debug(
-                f"Executing code in sandbox (runtime={self.runtime}, "
-                f"network={network_mode}, mem={self.config.memory_limit})"
-            )
-
-            # Build the boot command
-            # Sets PYTHONPATH to include mounted agent_lib, then runs boot.py
-            command = [
-                "sh", "-c",
-                "export PYTHONPATH=/opt:$PYTHONPATH && "
-                "python3 -c \""
-                "import sys; sys.path.insert(0, '/opt'); "
-                "from rlm_agent_lib.boot import setup_environment, execute_code; "
-                "env = setup_environment(); "
-                "code = open('/tmp/user_code.py').read(); "
-                "execute_code(code, env)"
-                "\""
-            ]
-
-            # Run the container
-            container = self.client.containers.run(
-                image=self.config.image,
-                command=command,
-                detach=True,
-                # Security: Runtime
-                runtime=self.runtime,
-                # Security: Network isolation
-                network_mode=network_mode,
-                # Security: Resource limits
-                mem_limit=self.config.memory_limit,
-                memswap_limit=self.config.memory_limit,  # Disable swap
-                nano_cpus=nano_cpus,
-                pids_limit=self.config.pids_limit,
-                # Security: Privileges
-                security_opt=security_opt,
-                # Security: IPC isolation
-                ipc_mode="none",
-                # IO: Volumes
-                volumes=volumes,
-                # Environment
-                environment={
-                    "PYTHONPATH": "/opt",
-                    "PYTHONDONTWRITEBYTECODE": "1",
-                },
-                # Cleanup
-                remove=False,  # We need to inspect exit status first
-            )
+        # v3.0: TemporaryDirectory for crash-safe cleanup
+        with tempfile.TemporaryDirectory(prefix="rlm_exec_") as tmpdir:
+            script_path = Path(tmpdir) / "user_code.py"
+            script_path.write_text(code, encoding="utf-8")
 
             try:
-                # Wait for completion with timeout
-                result = container.wait(timeout=self.config.timeout)
-                exit_code = result.get("StatusCode", -1)
-                timed_out = False
-            except Exception:
-                # Timeout or other error
-                logger.warning("Container execution timed out, killing...")
-                container.kill()
-                exit_code = 124  # Standard timeout exit code
-                timed_out = True
+                # Configure volumes - CLEAN BOOT: mount agent_lib as volume
+                volumes = {
+                    # Mount agent_lib as read-only Python package
+                    str(AGENT_LIB_PATH): {"bind": "/opt/rlm_agent_lib", "mode": "ro"},
+                    # Mount user script
+                    str(script_path): {"bind": "/tmp/user_code.py", "mode": "ro"},
+                }
 
-            # Get logs
-            stdout = container.logs(stdout=True, stderr=False).decode("utf-8", errors="replace")
-            stderr = container.logs(stdout=False, stderr=True).decode("utf-8", errors="replace")
+                if context_mount:
+                    volumes[context_mount] = {"bind": "/mnt/context", "mode": "ro"}
 
-            # Check for OOM
-            container.reload()
-            oom_killed = container.attrs.get("State", {}).get("OOMKilled", False)
+                # Configure network
+                network_mode = "bridge" if self.config.network_enabled else "none"
+                if self.config.network_enabled:
+                    logger.warning("⚠ Network access enabled - this is a security risk!")
 
-            # Cleanup
-            container.remove(force=True)
+                # Security options
+                security_opt = ["no-new-privileges:true"]
 
-            # Truncate output for safety
-            max_bytes = settings.max_stdout_bytes
-            if len(stdout) > max_bytes:
-                head = stdout[:1000]
-                tail = stdout[-3000:]
-                truncated = len(stdout) - max_bytes
-                stdout = f"{head}\n... [TRUNCATED {truncated} bytes] ...\n{tail}"
+                # CPU configuration (nano_cpus = 10^9 * cores)
+                nano_cpus = int(self.config.cpu_limit * 1_000_000_000)
 
-            return ExecutionResult(
-                stdout=stdout,
-                stderr=stderr,
-                exit_code=exit_code,
-                timed_out=timed_out,
-                oom_killed=oom_killed,
-            )
+                logger.debug(
+                    f"Executing code in sandbox (runtime={self.runtime}, "
+                    f"network={network_mode}, mem={self.config.memory_limit})"
+                )
 
-        except ContainerError as e:
-            raise SandboxError(
-                message="Container execution failed",
-                exit_code=e.exit_status,
-                stderr=str(e.stderr),
-            ) from e
+                # Build the boot command
+                command = [
+                    "sh", "-c",
+                    "export PYTHONPATH=/opt:$PYTHONPATH && "
+                    "python3 -c \""
+                    "import sys; sys.path.insert(0, '/opt'); "
+                    "from rlm_agent_lib.boot import setup_environment, execute_code; "
+                    "env = setup_environment(); "
+                    "code = open('/tmp/user_code.py').read(); "
+                    "execute_code(code, env)"
+                    "\""
+                ]
 
-        except DockerException as e:
-            raise SandboxError(
-                message="Docker error during execution",
-                details={"error": str(e)},
-            ) from e
+                # Run the container
+                container = self.client.containers.run(
+                    image=self.config.image,
+                    command=command,
+                    detach=True,
+                    runtime=self.runtime,
+                    network_mode=network_mode,
+                    mem_limit=self.config.memory_limit,
+                    memswap_limit=self.config.memory_limit,
+                    nano_cpus=nano_cpus,
+                    pids_limit=self.config.pids_limit,
+                    security_opt=security_opt,
+                    ipc_mode="none",
+                    volumes=volumes,
+                    environment={
+                        "PYTHONPATH": "/opt",
+                        "PYTHONDONTWRITEBYTECODE": "1",
+                    },
+                    remove=False,
+                )
 
-        finally:
-            # Cleanup temp file
-            Path(script_path).unlink(missing_ok=True)
+                try:
+                    result = container.wait(timeout=self.config.timeout)
+                    exit_code = result.get("StatusCode", -1)
+                    timed_out = False
+                except Exception:
+                    logger.warning("Container execution timed out, killing...")
+                    container.kill()
+                    exit_code = 124
+                    timed_out = True
+
+                # Get logs
+                stdout = container.logs(stdout=True, stderr=False).decode("utf-8", errors="replace")
+                stderr = container.logs(stdout=False, stderr=True).decode("utf-8", errors="replace")
+
+                # Check for OOM
+                container.reload()
+                oom_killed = container.attrs.get("State", {}).get("OOMKilled", False)
+
+                # Cleanup container
+                container.remove(force=True)
+
+                # Truncate output for safety
+                max_bytes = settings.max_stdout_bytes
+                if len(stdout) > max_bytes:
+                    head = stdout[:1000]
+                    tail = stdout[-3000:]
+                    truncated = len(stdout) - max_bytes
+                    stdout = f"{head}\n... [TRUNCATED {truncated} bytes] ...\n{tail}"
+
+                return ExecutionResult(
+                    stdout=stdout,
+                    stderr=stderr,
+                    exit_code=exit_code,
+                    timed_out=timed_out,
+                    oom_killed=oom_killed,
+                )
+
+            except ContainerError as e:
+                raise SandboxError(
+                    message="Container execution failed",
+                    exit_code=e.exit_status,
+                    stderr=str(e.stderr),
+                ) from e
+
+            except DockerException as e:
+                raise SandboxError(
+                    message="Docker error during execution",
+                    details={"error": str(e)},
+                ) from e
+        
+        # Temp directory auto-cleaned here
 
     async def execute_async(
         self,

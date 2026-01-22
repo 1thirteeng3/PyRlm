@@ -1,8 +1,11 @@
 """
-Context Handle for memory-efficient file access.
+Context Handle for memory-efficient file access (v3.0).
 
-This module provides the ContextHandle class that allows the LLM to work
-with large context files without loading them entirely into memory.
+v3.0 Changes:
+- Binary file detection (null bytes, control chars)
+- Fail-fast on PDFs, images, binaries
+- Prevents LLM hallucination on garbage input
+
 Uses mmap for efficient random access and searching.
 """
 
@@ -15,13 +18,17 @@ from typing import Iterator, Optional
 from rlm.core.exceptions import ContextError
 
 
+# v3.0: Binary detection constants
+BINARY_THRESHOLD = 0.05  # 5% control chars indicates binary
+CONTROL_CHARS = set(range(0, 9)) | set(range(14, 32))  # Exclude \t \n \r
+
+
 class ContextHandle:
     """
     Memory-efficient handle for accessing large context files.
 
-    This class is designed to be injected into the sandbox environment,
-    allowing the LLM to search and read large files without loading
-    everything into memory.
+    v3.0: Detects binary files to prevent LLM hallucination.
+    Raises ContextError if you try to load a PDF, image, or compiled binary.
 
     The API is designed to encourage efficient patterns:
     - search() to find relevant sections
@@ -47,7 +54,7 @@ class ContextHandle:
             path: Path to the context file
 
         Raises:
-            ContextError: If the file doesn't exist or can't be accessed
+            ContextError: If the file doesn't exist, is binary, or can't be accessed
         """
         self.path = Path(path)
 
@@ -73,6 +80,60 @@ class ContextHandle:
 
         self._mmap: Optional[mmap.mmap] = None
         self._file = None
+        
+        # v3.0: Validate text content on init
+        self._validate_not_binary()
+
+    def _validate_not_binary(self) -> None:
+        """
+        Validate that the file is text, not binary.
+        
+        v3.0: Prevents loading PDFs, images, or binaries as context.
+        Checks first 8KB for null bytes and control characters.
+        
+        Raises:
+            ContextError: If binary content is detected
+        """
+        sample_size = min(8192, self._size)
+        if sample_size == 0:
+            return  # Empty file is OK
+        
+        with open(self.path, "rb") as f:
+            sample = f.read(sample_size)
+        
+        # Check for null bytes (definitive binary indicator)
+        if b'\x00' in sample:
+            raise ContextError(
+                message="Binary file detected via null bytes. ContextHandle only supports text files.",
+                path=str(self.path),
+                details={"hint": "Cannot load PDFs, images, or compiled binaries as context."},
+            )
+        
+        # Check for excessive control characters
+        control_count = sum(1 for b in sample if b in CONTROL_CHARS)
+        ratio = control_count / len(sample)
+        
+        if ratio > BINARY_THRESHOLD:
+            raise ContextError(
+                message=f"Binary file detected ({ratio:.1%} control characters). ContextHandle only supports text.",
+                path=str(self.path),
+                details={"control_char_ratio": ratio, "threshold": BINARY_THRESHOLD},
+            )
+
+    def _validate_text_content(self, chunk: str) -> None:
+        """
+        Runtime validation of text content.
+        
+        v3.0: Additional check during reads to catch late-detected binary.
+        
+        Raises:
+            ContextError: If binary content is found
+        """
+        if '\x00' in chunk:
+            raise ContextError(
+                message="Binary content detected via null bytes during read.",
+                path=str(self.path),
+            )
 
     @property
     def size(self) -> int:
@@ -107,12 +168,17 @@ class ContextHandle:
         """
         Read a specific chunk of the file.
 
+        v3.0: Validates content is text, not binary.
+
         Args:
             start: Starting byte offset
             length: Number of bytes to read
 
         Returns:
             The decoded text content
+            
+        Raises:
+            ContextError: If binary content is detected
         """
         if start < 0:
             start = 0
@@ -125,7 +191,12 @@ class ContextHandle:
 
         with open(self.path, "r", encoding="utf-8", errors="replace") as f:
             f.seek(start)
-            return f.read(actual_length)
+            content = f.read(actual_length)
+        
+        # v3.0: Validate no binary garbage
+        self._validate_text_content(content)
+        
+        return content
 
     def read_window(self, offset: int, radius: int = DEFAULT_WINDOW_SIZE) -> str:
         """
@@ -279,10 +350,11 @@ class ContextHandle:
 
     def close(self) -> None:
         """Close the memory-mapped file."""
-        if self._mmap:
+        # v3.0: Safe attribute access (handle partial init on validation failure)
+        if getattr(self, '_mmap', None):
             self._mmap.close()
             self._mmap = None
-        if self._file:
+        if getattr(self, '_file', None):
             self._file.close()
             self._file = None
 

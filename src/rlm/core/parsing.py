@@ -1,27 +1,18 @@
 """
 Robust Markdown Code Block Parser.
 
-v2.1: Uses state machine instead of regex for reliable code extraction.
-Handles malformed markdown, nested blocks, and edge cases.
+v3.0: Strict mistletoe-only parsing.
+- No regex fallback (fail-fast design)
+- Direct AST parsing for reliability
+- Binary files detected upstream in ContextHandle
 """
 
 from dataclasses import dataclass
-from enum import Enum
 from typing import List, Optional, Tuple
 
-# Try to use mistletoe for advanced parsing
-try:
-    import mistletoe
-    from mistletoe.block_token import CodeFence
-    HAS_MISTLETOE = True
-except ImportError:
-    HAS_MISTLETOE = False
-
-
-class ParserState(Enum):
-    """State machine states for code block parsing."""
-    NORMAL = "normal"
-    IN_CODE_BLOCK = "in_code_block"
+# v3.0: Direct import - fail-fast if not installed
+import mistletoe
+from mistletoe.block_token import CodeFence
 
 
 @dataclass
@@ -33,90 +24,46 @@ class CodeBlock:
     end_line: int
 
 
-def extract_code_blocks_regex(text: str) -> List[CodeBlock]:
+def extract_code_blocks(text: str) -> List[CodeBlock]:
     """
-    Fallback regex-based extraction for when mistletoe is unavailable.
+    Extract all code blocks from markdown using mistletoe AST.
     
-    More robust than simple regex:
-    - Handles triple backticks with language specifier
-    - Ignores inline code
-    - Tracks line numbers
-    """
-    blocks: List[CodeBlock] = []
-    lines = text.split('\n')
+    v3.0: Uses pure AST parsing via mistletoe.
+    No regex fallback - deterministic behavior guaranteed.
     
-    state = ParserState.NORMAL
-    current_block: List[str] = []
-    block_start = 0
-    block_language = ""
-    fence_char = '`'
-    fence_count = 0
-    
-    for i, line in enumerate(lines):
-        stripped = line.strip()
+    Args:
+        text: Markdown text containing code blocks
         
-        if state == ParserState.NORMAL:
-            # Check for opening fence (``` or ~~~)
-            if stripped.startswith('```') or stripped.startswith('~~~'):
-                fence_char = stripped[0]
-                fence_count = len(stripped) - len(stripped.lstrip(fence_char))
-                
-                if fence_count >= 3:
-                    state = ParserState.IN_CODE_BLOCK
-                    block_start = i + 1
-                    
-                    # Extract language specifier
-                    remainder = stripped[fence_count:].strip()
-                    block_language = remainder.split()[0] if remainder else ""
-                    current_block = []
-                    
-        elif state == ParserState.IN_CODE_BLOCK:
-            # Check for closing fence
-            if stripped.startswith(fence_char * fence_count) and \
-               len(stripped.rstrip(fence_char)) <= len(stripped) - fence_count:
-                # Found closing fence
-                state = ParserState.NORMAL
-                
-                code = '\n'.join(current_block)
-                if code.strip():
-                    blocks.append(CodeBlock(
-                        code=code,
-                        language=block_language,
-                        start_line=block_start,
-                        end_line=i,
-                    ))
-                current_block = []
-            else:
-                current_block.append(line)
-    
-    return blocks
-
-
-def extract_code_blocks_mistletoe(text: str) -> List[CodeBlock]:
+    Returns:
+        List of CodeBlock objects with code, language, and positions
     """
-    Use mistletoe for reliable markdown parsing.
-    
-    This handles edge cases that regex can miss:
-    - Indented code blocks
-    - Escaped backticks
-    - Nested structures
-    """
-    if not HAS_MISTLETOE:
-        return extract_code_blocks_regex(text)
-    
     blocks: List[CodeBlock] = []
     
     with mistletoe.Document(text) as doc:
-        for token in doc.children:
-            if isinstance(token, CodeFence):
-                blocks.append(CodeBlock(
-                    code=token.children[0].content if token.children else "",
-                    language=token.language or "",
-                    start_line=getattr(token, 'line_number', 0),
-                    end_line=getattr(token, 'line_number', 0),
-                ))
+        _extract_from_tokens(doc.children, blocks)
     
     return blocks
+
+
+def _extract_from_tokens(tokens: list, blocks: List[CodeBlock]) -> None:
+    """Recursively extract code blocks from token tree."""
+    for token in tokens:
+        if isinstance(token, CodeFence):
+            code = ""
+            if token.children:
+                # Extract raw content from children
+                code = token.children[0].content if hasattr(token.children[0], 'content') else ""
+            
+            blocks.append(CodeBlock(
+                code=code,
+                language=token.language or "",
+                start_line=getattr(token, 'line_number', 0),
+                end_line=getattr(token, 'line_number', 0),
+            ))
+        
+        # Recurse into nested tokens
+        if hasattr(token, 'children') and token.children:
+            _extract_from_tokens(token.children, blocks)
 
 
 def extract_python_code(text: str) -> List[str]:
@@ -131,11 +78,11 @@ def extract_python_code(text: str) -> List[str]:
     Returns:
         List of Python code strings
     """
-    blocks = extract_code_blocks_mistletoe(text)
+    blocks = extract_code_blocks(text)
     
     python_codes: List[str] = []
     for block in blocks:
-        # Accept python, py, or unspecified language
+        # Accept python, py, python3, or unspecified language
         if block.language.lower() in ('python', 'py', 'python3', ''):
             code = block.code.strip()
             if code:

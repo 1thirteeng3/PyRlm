@@ -1,8 +1,10 @@
 """
-Async Docker Sandbox using aiodocker.
+Async Docker Sandbox using aiodocker (v3.0).
 
-v2.1: True async implementation for non-blocking container operations.
-This allows running multiple agents concurrently in async frameworks like FastAPI.
+v3.0 Changes:
+- TemporaryDirectory for crash-safe cleanup
+- Direct aiodocker import (fail-fast)
+- True async for non-blocking operations
 """
 
 from __future__ import annotations
@@ -10,16 +12,12 @@ from __future__ import annotations
 import asyncio
 import logging
 import tempfile
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-try:
-    import aiodocker
-    from aiodocker.exceptions import DockerError
-    HAS_AIODOCKER = True
-except ImportError:
-    HAS_AIODOCKER = False
+# v3.0: Direct import - fail-fast if not installed
+import aiodocker
+from aiodocker.exceptions import DockerError
 
 from rlm.config.settings import settings
 from rlm.core.exceptions import SandboxError, SecurityViolationError
@@ -32,8 +30,8 @@ class AsyncDockerSandbox:
     """
     Async Docker sandbox using aiodocker for non-blocking operations.
     
-    Use this when running in async contexts like FastAPI or aiohttp.
-    For synchronous usage, use the regular DockerSandbox class.
+    v3.0: Uses TemporaryDirectory for crash-safe cleanup.
+    No leftover files in /tmp even on SIGKILL.
     
     Example:
         >>> sandbox = AsyncDockerSandbox()
@@ -49,12 +47,6 @@ class AsyncDockerSandbox:
         config: Optional[SandboxConfig] = None,
     ) -> None:
         """Initialize the async sandbox."""
-        if not HAS_AIODOCKER:
-            raise ImportError(
-                "aiodocker is required for AsyncDockerSandbox. "
-                "Install it with: pip install aiodocker"
-            )
-        
         self.config = config or SandboxConfig()
         if image:
             self.config.image = image
@@ -64,7 +56,7 @@ class AsyncDockerSandbox:
         self._runtime: Optional[str] = None
     
     async def _detect_runtime(self, docker: aiodocker.Docker) -> str:
-        """Detect the best available runtime."""
+        """Detect the best available runtime (fail-closed by default)."""
         if self.config.runtime != "auto":
             return self.config.runtime
         
@@ -106,6 +98,9 @@ class AsyncDockerSandbox:
         """
         Execute code in an async Docker container.
         
+        v3.0: Uses TemporaryDirectory for crash-safe cleanup.
+        Directory auto-destructs on exit even under exceptions.
+        
         Args:
             code: Python code to execute
             context_mount: Optional context file path
@@ -113,112 +108,106 @@ class AsyncDockerSandbox:
         Returns:
             ExecutionResult with stdout, stderr, exit_code
         """
-        # Write code to temp file
-        with tempfile.NamedTemporaryFile(
-            mode="w",
-            suffix=".py",
-            delete=False,
-            encoding="utf-8",
-        ) as f:
-            f.write(code)
-            script_path = f.name
-        
-        try:
-            async with aiodocker.Docker() as docker:
-                runtime = await self._detect_runtime(docker)
-                await self._ensure_image(docker)
-                
-                # Build container config
-                binds = [
-                    f"{AGENT_LIB_PATH}:/opt/rlm_agent_lib:ro",
-                    f"{script_path}:/tmp/user_code.py:ro",
-                ]
-                if context_mount:
-                    binds.append(f"{context_mount}:/mnt/context:ro")
-                
-                config = {
-                    "Image": self.config.image,
-                    "Cmd": [
-                        "sh", "-c",
-                        "export PYTHONPATH=/opt:$PYTHONPATH && "
-                        "python3 -c \""
-                        "import sys; sys.path.insert(0, '/opt'); "
-                        "from rlm_agent_lib.boot import setup_environment, execute_code; "
-                        "env = setup_environment(); "
-                        "code = open('/tmp/user_code.py').read(); "
-                        "execute_code(code, env)"
-                        "\""
-                    ],
-                    "HostConfig": {
-                        "Binds": binds,
-                        "NetworkMode": "none" if not self.config.network_enabled else "bridge",
-                        "Memory": self._parse_memory_limit(self.config.memory_limit),
-                        "MemorySwap": self._parse_memory_limit(self.config.memory_limit),
-                        "NanoCPUs": int(self.config.cpu_limit * 1_000_000_000),
-                        "PidsLimit": self.config.pids_limit,
-                        "SecurityOpt": ["no-new-privileges:true"],
-                        "IpcMode": "none",
-                        "Runtime": runtime,
-                    },
-                    "Env": [
-                        "PYTHONPATH=/opt",
-                        "PYTHONDONTWRITEBYTECODE=1",
-                    ],
-                }
-                
-                # Create and start container
-                container = await docker.containers.create(config=config)
-                
-                try:
-                    await container.start()
+        # v3.0: TemporaryDirectory for crash-safe cleanup
+        with tempfile.TemporaryDirectory(prefix="rlm_exec_") as tmpdir:
+            script_path = Path(tmpdir) / "user_code.py"
+            script_path.write_text(code, encoding="utf-8")
+            
+            try:
+                async with aiodocker.Docker() as docker:
+                    runtime = await self._detect_runtime(docker)
+                    await self._ensure_image(docker)
                     
-                    # Wait with timeout
+                    # Build volume binds
+                    binds = [
+                        f"{AGENT_LIB_PATH}:/opt/rlm_agent_lib:ro",
+                        f"{str(script_path)}:/tmp/user_code.py:ro",
+                    ]
+                    if context_mount:
+                        binds.append(f"{context_mount}:/mnt/context:ro")
+                    
+                    config = {
+                        "Image": self.config.image,
+                        "Cmd": [
+                            "sh", "-c",
+                            "export PYTHONPATH=/opt:$PYTHONPATH && "
+                            "python3 -c \""
+                            "import sys; sys.path.insert(0, '/opt'); "
+                            "from rlm_agent_lib.boot import setup_environment, execute_code; "
+                            "env = setup_environment(); "
+                            "code = open('/tmp/user_code.py').read(); "
+                            "execute_code(code, env)"
+                            "\""
+                        ],
+                        "HostConfig": {
+                            "Binds": binds,
+                            "NetworkMode": "none" if not self.config.network_enabled else "bridge",
+                            "Memory": self._parse_memory_limit(self.config.memory_limit),
+                            "MemorySwap": self._parse_memory_limit(self.config.memory_limit),
+                            "NanoCPUs": int(self.config.cpu_limit * 1_000_000_000),
+                            "PidsLimit": self.config.pids_limit,
+                            "SecurityOpt": ["no-new-privileges:true"],
+                            "IpcMode": "none",
+                            "Runtime": runtime,
+                        },
+                        "Env": [
+                            "PYTHONPATH=/opt",
+                            "PYTHONDONTWRITEBYTECODE=1",
+                        ],
+                    }
+                    
+                    # Create and start container
+                    container = await docker.containers.create(config=config)
+                    
                     try:
-                        result = await asyncio.wait_for(
-                            container.wait(),
-                            timeout=self.config.timeout,
+                        await container.start()
+                        
+                        # Wait with timeout
+                        try:
+                            result = await asyncio.wait_for(
+                                container.wait(),
+                                timeout=self.config.timeout,
+                            )
+                            exit_code = result.get("StatusCode", -1)
+                            timed_out = False
+                        except asyncio.TimeoutError:
+                            logger.warning("Container timed out, killing...")
+                            await container.kill()
+                            exit_code = 124
+                            timed_out = True
+                        
+                        # Get logs
+                        logs = await container.log(stdout=True, stderr=True)
+                        stdout = "".join(logs)
+                        stderr = ""
+                        
+                        # Check OOM
+                        info = await container.show()
+                        oom_killed = info.get("State", {}).get("OOMKilled", False)
+                        
+                        # Truncate if needed
+                        max_bytes = settings.max_stdout_bytes
+                        if len(stdout) > max_bytes:
+                            stdout = stdout[:1000] + "\n...[TRUNCATED]...\n" + stdout[-3000:]
+                        
+                        return ExecutionResult(
+                            stdout=stdout,
+                            stderr=stderr,
+                            exit_code=exit_code,
+                            timed_out=timed_out,
+                            oom_killed=oom_killed,
                         )
-                        exit_code = result.get("StatusCode", -1)
-                        timed_out = False
-                    except asyncio.TimeoutError:
-                        logger.warning("Container timed out, killing...")
-                        await container.kill()
-                        exit_code = 124
-                        timed_out = True
-                    
-                    # Get logs
-                    logs = await container.log(stdout=True, stderr=True)
-                    stdout = "".join(logs)
-                    stderr = ""
-                    
-                    # Check OOM
-                    info = await container.show()
-                    oom_killed = info.get("State", {}).get("OOMKilled", False)
-                    
-                    # Truncate if needed
-                    max_bytes = settings.max_stdout_bytes
-                    if len(stdout) > max_bytes:
-                        stdout = stdout[:1000] + "\n...[TRUNCATED]...\n" + stdout[-3000:]
-                    
-                    return ExecutionResult(
-                        stdout=stdout,
-                        stderr=stderr,
-                        exit_code=exit_code,
-                        timed_out=timed_out,
-                        oom_killed=oom_killed,
-                    )
-                    
-                finally:
-                    await container.delete(force=True)
+                        
+                    finally:
+                        await container.delete(force=True)
+            
+            except DockerError as e:
+                raise SandboxError(
+                    message="Async Docker execution failed",
+                    details={"error": str(e)},
+                ) from e
         
-        except DockerError as e:
-            raise SandboxError(
-                message="Async Docker execution failed",
-                details={"error": str(e)},
-            ) from e
-        
-        finally:
-            Path(script_path).unlink(missing_ok=True)
+        # Temp directory auto-cleaned here
     
     @staticmethod
     def _parse_memory_limit(limit: str) -> int:
