@@ -1,13 +1,13 @@
 """
 Base LLM Client Interface.
 
-Defines the abstract interface for LLM providers and common data structures.
+v2.1: Added async methods (acomplete, astream) for non-blocking I/O.
 """
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Iterator, Literal, Optional
+from typing import AsyncIterator, Iterator, Literal, Optional
 
 
 class Role(str, Enum):
@@ -58,8 +58,9 @@ class BaseLLMClient(ABC):
     """
     Abstract base class for LLM provider clients.
 
-    All provider implementations (OpenAI, Anthropic, Google) must
-    inherit from this class and implement the required methods.
+    v2.1: All providers must implement both sync and async methods:
+    - complete() / acomplete() for full responses
+    - stream() / astream() for streaming responses
     """
 
     def __init__(
@@ -89,6 +90,8 @@ class BaseLLMClient(ABC):
         """Return the provider name (e.g., 'openai', 'anthropic')."""
         pass
 
+    # ==================== Sync Methods ====================
+
     @abstractmethod
     def complete(
         self,
@@ -97,7 +100,7 @@ class BaseLLMClient(ABC):
         **kwargs,
     ) -> LLMResponse:
         """
-        Generate a completion from the model.
+        Generate a completion from the model (synchronous).
 
         Args:
             messages: List of conversation messages
@@ -117,7 +120,7 @@ class BaseLLMClient(ABC):
         **kwargs,
     ) -> Iterator[str]:
         """
-        Stream a completion from the model.
+        Stream a completion from the model (synchronous).
 
         Args:
             messages: List of conversation messages
@@ -128,6 +131,52 @@ class BaseLLMClient(ABC):
             Chunks of the generated content
         """
         pass
+
+    # ==================== Async Methods (v2.1) ====================
+
+    @abstractmethod
+    async def acomplete(
+        self,
+        messages: list[Message],
+        system_prompt: Optional[str] = None,
+        **kwargs,
+    ) -> LLMResponse:
+        """
+        Generate a completion from the model (asynchronous).
+
+        Args:
+            messages: List of conversation messages
+            system_prompt: Optional system prompt
+            **kwargs: Additional provider-specific arguments
+
+        Returns:
+            LLMResponse containing the generated content
+        """
+        pass
+
+    @abstractmethod
+    async def astream(
+        self,
+        messages: list[Message],
+        system_prompt: Optional[str] = None,
+        **kwargs,
+    ) -> AsyncIterator[str]:
+        """
+        Stream a completion from the model (asynchronous).
+
+        Args:
+            messages: List of conversation messages
+            system_prompt: Optional system prompt
+            **kwargs: Additional provider-specific arguments
+
+        Yields:
+            Chunks of the generated content
+        """
+        pass
+        # Required for abstract async generator
+        yield  # type: ignore
+
+    # ==================== Utilities ====================
 
     def validate_api_key(self) -> bool:
         """
@@ -142,3 +191,4 @@ class BaseLLMClient(ABC):
             return True
         except Exception:
             return False
+

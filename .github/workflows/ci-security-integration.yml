@@ -1,0 +1,182 @@
+name: Security & Integration Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  # Allow manual trigger for testing
+  workflow_dispatch:
+
+# This workflow requires Docker and gVisor
+# It validates the security promises of the library
+
+jobs:
+  security-integration:
+    name: Security Integration (gVisor)
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+      
+      - name: Setup gVisor (runsc)
+        run: |
+          chmod +x setup_gvisor.sh
+          sudo ./setup_gvisor.sh
+          sudo systemctl restart docker
+      
+      - name: Verify Docker Runtime
+        run: |
+          echo "=== Docker Info ==="
+          docker info | grep -A 5 "Runtimes"
+          echo ""
+          echo "=== Checking runsc ==="
+          docker info | grep runsc && echo "✅ gVisor (runsc) available" || echo "⚠️ runsc not found"
+      
+      - name: Pull test image
+        run: docker pull python:3.11-slim
+      
+      - name: Run Security Tests
+        run: |
+          echo "=== Running Security Red Team Tests ==="
+          pytest tests/security/ -v -m security --tb=short
+        env:
+          RLM_DOCKER_RUNTIME: runsc
+          RLM_EXECUTION_MODE: docker
+
+  docker-isolation:
+    name: Docker Isolation Tests
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+      
+      - name: Test Network Isolation
+        run: |
+          echo "=== Testing Network Isolation ==="
+          python -c "
+          from rlm.core.repl.docker import DockerSandbox
+          
+          sandbox = DockerSandbox()
+          result = sandbox.execute('''
+          import socket
+          try:
+              s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+              s.settimeout(2)
+              s.connect(('8.8.8.8', 53))
+              print('CONNECTED - SECURITY FAILURE!')
+          except OSError as e:
+              print(f'BLOCKED: {e}')
+          ''')
+          
+          print('Output:', result.stdout)
+          assert 'BLOCKED' in result.stdout or 'Network is unreachable' in result.stdout
+          assert 'CONNECTED' not in result.stdout
+          print('✅ Network isolation verified')
+          "
+      
+      - name: Test Memory Limits
+        run: |
+          echo "=== Testing Memory Limits ==="
+          python -c "
+          from rlm.core.repl.docker import DockerSandbox
+          
+          sandbox = DockerSandbox()
+          result = sandbox.execute('''
+          # Try to allocate 1GB - should fail with 512MB limit
+          try:
+              a = 'x' * (800 * 1024 * 1024)  # 800MB
+              print('ALLOCATED - SECURITY FAILURE!')
+          except MemoryError:
+              print('BLOCKED: MemoryError')
+          ''')
+          
+          print('Output:', result.stdout)
+          print('OOM Killed:', result.oom_killed)
+          print('Exit Code:', result.exit_code)
+          
+          # Either OOM killed or MemoryError
+          assert result.oom_killed or 'MemoryError' in result.stdout or result.exit_code != 0
+          print('✅ Memory limits verified')
+          "
+
+  egress-filter:
+    name: Egress Filter Tests
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+      
+      - name: Test Secret Detection
+        run: |
+          echo "=== Testing Egress Filters ==="
+          python -c "
+          from rlm.security.egress import sanitize_output, detect_secrets, calculate_shannon_entropy
+          
+          # Test API key detection
+          output = 'Result: AKIAIOSFODNN7EXAMPLE'
+          secrets = detect_secrets(output)
+          assert len(secrets) > 0, 'Should detect AWS key'
+          print('✅ AWS key detection works')
+          
+          # Test private key detection
+          output = '-----BEGIN RSA PRIVATE KEY-----'
+          secrets = detect_secrets(output)
+          assert len(secrets) > 0, 'Should detect private key'
+          print('✅ Private key detection works')
+          
+          # Test JWT detection
+          output = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.test'
+          secrets = detect_secrets(output)
+          assert len(secrets) > 0, 'Should detect JWT'
+          print('✅ JWT detection works')
+          
+          # Test entropy calculation
+          entropy = calculate_shannon_entropy('sk-a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6')
+          assert entropy > 4.0, f'High entropy expected, got {entropy}'
+          print(f'✅ Entropy detection works (entropy={entropy:.2f})')
+          
+          print('\\n=== All egress filter tests passed ===')
+          "
+
+  security-status:
+    name: Security Status
+    runs-on: ubuntu-latest
+    needs: [security-integration, docker-isolation, egress-filter]
+    if: always()
+    steps:
+      - name: Check security tests
+        run: |
+          if [[ "${{ needs.security-integration.result }}" != "success" ]] || \
+             [[ "${{ needs.docker-isolation.result }}" != "success" ]] || \
+             [[ "${{ needs.egress-filter.result }}" != "success" ]]; then
+            echo "❌ Security Tests Failed - DO NOT RELEASE"
+            exit 1
+          fi
+          echo "✅ All Security Tests Passed"

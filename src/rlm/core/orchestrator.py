@@ -1,18 +1,24 @@
 """
-Main Orchestrator for RLM.
+Main Orchestrator for RLM v2.1.
 
-This module provides the core agent loop that coordinates between
-the LLM, sandbox execution, and egress filtering.
+Coordinates the agent loop with:
+- Robust markdown parsing (mistletoe)
+- Async support for non-blocking execution
+- Clean boot sandbox integration
+- Budget tracking and egress filtering
 """
 
+from __future__ import annotations
+
+import asyncio
 import logging
-import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
 from rlm.config.settings import settings
 from rlm.core.exceptions import BudgetExceededError, RLMError, SandboxError
+from rlm.core.parsing import extract_python_code, extract_final_answer
 from rlm.core.repl.docker import DockerSandbox, ExecutionResult
 from rlm.llm.base import BaseLLMClient, LLMResponse, Message
 from rlm.llm.factory import create_llm_client
@@ -21,13 +27,6 @@ from rlm.security.egress import EgressFilter
 from rlm.utils.cost import BudgetManager
 
 logger = logging.getLogger(__name__)
-
-
-# Pattern to extract code blocks from LLM responses
-CODE_BLOCK_PATTERN = re.compile(r"```(?:python)?\s*\n(.*?)```", re.DOTALL)
-
-# Pattern to detect final answer
-FINAL_ANSWER_PATTERN = re.compile(r"FINAL\s*\((.*?)\)", re.DOTALL)
 
 
 @dataclass
@@ -39,6 +38,8 @@ class OrchestratorConfig:
     system_prompt_mode: str = "full"
     custom_instructions: Optional[str] = None
     raise_on_leak: bool = False
+    # v2.1: Allow unsafe runtime for development
+    allow_unsafe_runtime: bool = False
 
 
 @dataclass
@@ -67,14 +68,20 @@ class OrchestratorResult:
 
 class Orchestrator:
     """
-    Main orchestrator for RLM code execution.
+    Main orchestrator for RLM code execution (v2.1).
 
-    Coordinates the agent loop:
+    v2.1 Changes:
+    - Uses robust markdown parsing (mistletoe)
+    - Supports async execution via arun()
+    - Integrates with clean boot sandbox
+    - Fail-closed security by default
+
+    Workflow:
     1. Send user query to LLM with system prompt
-    2. Parse LLM response for code blocks
-    3. Execute code in sandbox
-    4. Filter output and send back to LLM
-    5. Repeat until FINAL() is emitted or max iterations reached
+    2. Parse LLM response for code blocks (robust parsing)
+    3. Execute code in sandbox (clean boot)
+    4. Filter output through egress controls
+    5. Repeat until FINAL() or max iterations
 
     Example:
         >>> orchestrator = Orchestrator()
@@ -116,7 +123,11 @@ class Orchestrator:
     def sandbox(self) -> DockerSandbox:
         """Lazy-load Docker sandbox."""
         if self._sandbox is None:
-            self._sandbox = DockerSandbox()
+            from rlm.core.repl.docker import SandboxConfig
+            sandbox_config = SandboxConfig(
+                allow_unsafe_runtime=self.config.allow_unsafe_runtime,
+            )
+            self._sandbox = DockerSandbox(config=sandbox_config)
         return self._sandbox
 
     def _get_system_prompt(self) -> str:
@@ -128,18 +139,6 @@ class Orchestrator:
             custom_instructions=self.config.custom_instructions,
         )
 
-    def _extract_code_blocks(self, text: str) -> list[str]:
-        """Extract Python code blocks from LLM response."""
-        blocks = CODE_BLOCK_PATTERN.findall(text)
-        return [block.strip() for block in blocks if block.strip()]
-
-    def _extract_final_answer(self, text: str) -> Optional[str]:
-        """Extract final answer from LLM response or code output."""
-        match = FINAL_ANSWER_PATTERN.search(text)
-        if match:
-            return match.group(1).strip()
-        return None
-
     def _call_llm(self, iteration: int) -> LLMResponse:
         """Call the LLM and track the cost."""
         system_prompt = self._get_system_prompt()
@@ -150,6 +149,31 @@ class Orchestrator:
         )
 
         # Track cost
+        self.budget.record_usage(
+            model=response.model,
+            input_tokens=response.usage.prompt_tokens,
+            output_tokens=response.usage.completion_tokens,
+        )
+
+        self.steps.append(ExecutionStep(
+            iteration=iteration,
+            action="llm_call",
+            input_data=self.history[-1].content if self.history else "",
+            output_data=response.content,
+            success=True,
+        ))
+
+        return response
+
+    async def _acall_llm(self, iteration: int) -> LLMResponse:
+        """Call the LLM asynchronously."""
+        system_prompt = self._get_system_prompt()
+
+        response = await self.llm.acomplete(
+            messages=self.history,
+            system_prompt=system_prompt,
+        )
+
         self.budget.record_usage(
             model=response.model,
             input_tokens=response.usage.prompt_tokens,
@@ -202,13 +226,115 @@ class Orchestrator:
             ))
             raise
 
+    async def _aexecute_code(self, code: str, iteration: int) -> ExecutionResult:
+        """Execute code asynchronously."""
+        context_mount = str(self.config.context_path) if self.config.context_path else None
+
+        try:
+            result = await self.sandbox.execute_async(code, context_mount=context_mount)
+
+            if self.egress_filter:
+                result.stdout = self.egress_filter.filter(
+                    result.stdout,
+                    raise_on_leak=self.config.raise_on_leak,
+                )
+
+            self.steps.append(ExecutionStep(
+                iteration=iteration,
+                action="code_execution",
+                input_data=code,
+                output_data=result.stdout,
+                success=result.success,
+                error=result.stderr if not result.success else None,
+            ))
+
+            return result
+
+        except SandboxError as e:
+            self.steps.append(ExecutionStep(
+                iteration=iteration,
+                action="code_execution",
+                input_data=code,
+                output_data="",
+                success=False,
+                error=str(e),
+            ))
+            raise
+
+    def _process_iteration(
+        self,
+        iteration: int,
+        assistant_message: str,
+    ) -> tuple[Optional[str], bool]:
+        """
+        Process a single iteration.
+        
+        Returns:
+            Tuple of (final_answer, should_continue)
+        """
+        # Check for final answer in LLM response
+        final_answer = extract_final_answer(assistant_message)
+        if final_answer:
+            self.steps.append(ExecutionStep(
+                iteration=iteration,
+                action="final_answer",
+                input_data=assistant_message,
+                output_data=final_answer,
+                success=True,
+            ))
+            return final_answer, False
+
+        # Add assistant response to history
+        self.history.append(Message(role="assistant", content=assistant_message))
+
+        # v2.1: Use robust parser instead of regex
+        code_blocks = extract_python_code(assistant_message)
+
+        if not code_blocks:
+            # No code - might be final answer
+            if iteration > 0:
+                return assistant_message, False
+            return None, True
+
+        # Execute code blocks
+        combined_output = []
+        for code in code_blocks:
+            result = self._execute_code(code, iteration)
+
+            if result.oom_killed:
+                combined_output.append("Error: Memory Limit Exceeded (OOMKilled)")
+            elif result.timed_out:
+                combined_output.append("Error: Execution Timeout")
+            elif not result.success:
+                combined_output.append(f"Error (exit {result.exit_code}):\n{result.stderr}")
+            else:
+                combined_output.append(result.stdout)
+
+            # Check for final answer in output
+            final = extract_final_answer(result.stdout)
+            if final:
+                self.steps.append(ExecutionStep(
+                    iteration=iteration,
+                    action="final_answer",
+                    input_data=result.stdout,
+                    output_data=final,
+                    success=True,
+                ))
+                return final, False
+
+        # Add observation
+        observation = "\n---\n".join(combined_output)
+        self.history.append(Message(role="user", content=f"Observation:\n{observation}"))
+
+        return None, True
+
     def run(
         self,
         query: str,
         context_path: Optional[str | Path] = None,
     ) -> OrchestratorResult:
         """
-        Run the orchestration loop for a user query.
+        Run the orchestration loop (synchronous).
 
         Args:
             query: User's question or task
@@ -221,10 +347,9 @@ class Orchestrator:
         self.history = []
         self.steps = []
 
-        # Setup context if provided
+        # Setup context
         if context_path:
             self.config.context_path = Path(context_path)
-            # Create egress filter with context
             context_sample = Path(context_path).read_text(encoding="utf-8", errors="replace")[:5000]
             self.egress_filter = EgressFilter(context=context_sample)
         else:
@@ -239,18 +364,13 @@ class Orchestrator:
 
                 # Call LLM
                 response = self._call_llm(iteration)
-                assistant_message = response.content
 
-                # Check for final answer in LLM response
-                final_answer = self._extract_final_answer(assistant_message)
-                if final_answer:
-                    self.steps.append(ExecutionStep(
-                        iteration=iteration,
-                        action="final_answer",
-                        input_data=assistant_message,
-                        output_data=final_answer,
-                        success=True,
-                    ))
+                # Process response
+                final_answer, should_continue = self._process_iteration(
+                    iteration, response.content
+                )
+
+                if not should_continue:
                     return OrchestratorResult(
                         final_answer=final_answer,
                         success=True,
@@ -258,64 +378,6 @@ class Orchestrator:
                         steps=self.steps,
                         budget_summary=self.budget.summary(),
                     )
-
-                # Add assistant response to history
-                self.history.append(Message(role="assistant", content=assistant_message))
-
-                # Extract and execute code blocks
-                code_blocks = self._extract_code_blocks(assistant_message)
-
-                if not code_blocks:
-                    # No code to execute - LLM might be answering directly
-                    # Check if this looks like a final answer
-                    if iteration > 0:  # After first iteration, treat as final
-                        return OrchestratorResult(
-                            final_answer=assistant_message,
-                            success=True,
-                            iterations=iteration + 1,
-                            steps=self.steps,
-                            budget_summary=self.budget.summary(),
-                        )
-                    continue
-
-                # Execute each code block
-                combined_output = []
-                for code in code_blocks:
-                    result = self._execute_code(code, iteration)
-
-                    if result.oom_killed:
-                        combined_output.append("Error: Memory Limit Exceeded (OOMKilled)")
-                    elif result.timed_out:
-                        combined_output.append("Error: Execution Timeout")
-                    elif not result.success:
-                        combined_output.append(f"Error (exit {result.exit_code}):\n{result.stderr}")
-                    else:
-                        combined_output.append(result.stdout)
-
-                    # Check for final answer in output
-                    final_answer = self._extract_final_answer(result.stdout)
-                    if final_answer:
-                        self.steps.append(ExecutionStep(
-                            iteration=iteration,
-                            action="final_answer",
-                            input_data=result.stdout,
-                            output_data=final_answer,
-                            success=True,
-                        ))
-                        return OrchestratorResult(
-                            final_answer=final_answer,
-                            success=True,
-                            iterations=iteration + 1,
-                            steps=self.steps,
-                            budget_summary=self.budget.summary(),
-                        )
-
-                # Add observation to history
-                observation = "\n---\n".join(combined_output)
-                self.history.append(Message(
-                    role="user",
-                    content=f"Observation:\n{observation}",
-                ))
 
             # Max iterations reached
             return OrchestratorResult(
@@ -347,18 +409,123 @@ class Orchestrator:
                 error=str(e),
             )
 
-    def chat(self, message: str) -> str:
+    async def arun(
+        self,
+        query: str,
+        context_path: Optional[str | Path] = None,
+    ) -> OrchestratorResult:
         """
-        Simple chat interface for one-off questions.
+        Run the orchestration loop (asynchronous).
 
-        This is a simplified interface that runs a single iteration
-        and returns the response directly.
+        v2.1: True async for non-blocking I/O in async frameworks.
 
         Args:
-            message: User message
+            query: User's question or task
+            context_path: Optional path to context file
 
         Returns:
-            Assistant response
+            OrchestratorResult with the final answer
         """
+        # Reset state
+        self.history = []
+        self.steps = []
+
+        # Setup context
+        if context_path:
+            self.config.context_path = Path(context_path)
+            context_sample = await asyncio.to_thread(
+                lambda: Path(context_path).read_text(encoding="utf-8", errors="replace")[:5000]
+            )
+            self.egress_filter = EgressFilter(context=context_sample)
+        else:
+            self.egress_filter = EgressFilter()
+
+        self.history.append(Message(role="user", content=query))
+
+        try:
+            for iteration in range(self.config.max_iterations):
+                logger.info(f"Async iteration {iteration + 1}/{self.config.max_iterations}")
+
+                response = await self._acall_llm(iteration)
+
+                final_answer = extract_final_answer(response.content)
+                if final_answer:
+                    self.steps.append(ExecutionStep(
+                        iteration=iteration,
+                        action="final_answer",
+                        input_data=response.content,
+                        output_data=final_answer,
+                        success=True,
+                    ))
+                    return OrchestratorResult(
+                        final_answer=final_answer,
+                        success=True,
+                        iterations=iteration + 1,
+                        steps=self.steps,
+                        budget_summary=self.budget.summary(),
+                    )
+
+                self.history.append(Message(role="assistant", content=response.content))
+                code_blocks = extract_python_code(response.content)
+
+                if not code_blocks:
+                    if iteration > 0:
+                        return OrchestratorResult(
+                            final_answer=response.content,
+                            success=True,
+                            iterations=iteration + 1,
+                            steps=self.steps,
+                            budget_summary=self.budget.summary(),
+                        )
+                    continue
+
+                # Execute async
+                combined_output = []
+                for code in code_blocks:
+                    result = await self._aexecute_code(code, iteration)
+
+                    if result.oom_killed:
+                        combined_output.append("Error: OOMKilled")
+                    elif result.timed_out:
+                        combined_output.append("Error: Timeout")
+                    elif not result.success:
+                        combined_output.append(f"Error:\n{result.stderr}")
+                    else:
+                        combined_output.append(result.stdout)
+
+                    final = extract_final_answer(result.stdout)
+                    if final:
+                        return OrchestratorResult(
+                            final_answer=final,
+                            success=True,
+                            iterations=iteration + 1,
+                            steps=self.steps,
+                            budget_summary=self.budget.summary(),
+                        )
+
+                observation = "\n---\n".join(combined_output)
+                self.history.append(Message(role="user", content=f"Observation:\n{observation}"))
+
+            return OrchestratorResult(
+                final_answer=None,
+                success=False,
+                iterations=self.config.max_iterations,
+                steps=self.steps,
+                budget_summary=self.budget.summary(),
+                error="Max iterations reached",
+            )
+
+        except (BudgetExceededError, RLMError) as e:
+            return OrchestratorResult(
+                final_answer=None,
+                success=False,
+                iterations=len([s for s in self.steps if s.action == "llm_call"]),
+                steps=self.steps,
+                budget_summary=self.budget.summary(),
+                error=str(e),
+            )
+
+    def chat(self, message: str) -> str:
+        """Simple chat interface for one-off questions."""
         result = self.run(message)
         return result.final_answer or result.steps[-1].output_data if result.steps else ""

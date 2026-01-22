@@ -1,11 +1,16 @@
 """
 Egress Filtering Module.
 
-This module implements security filters to prevent data exfiltration through
-code execution output. It detects:
-1. High entropy data (potential secrets, API keys, private keys)
-2. Context echo attacks (printing raw context back)
-3. Oversized output (truncation with smart head/tail preservation)
+v2.1 Improvements:
+- Binary output detection (magic bytes)
+- Reduced false positives (short string skip, allowlist)
+- Smarter entropy thresholds
+
+Security layers:
+1. High entropy data detection (secrets, encoded data)
+2. Context echo attacks (printing raw context)
+3. Binary file output (ZIP, images, compiled)
+4. Known secret patterns (API keys, JWTs)
 """
 
 import hashlib
@@ -13,13 +18,28 @@ import logging
 import math
 import re
 from collections import Counter
-from dataclasses import dataclass
-from typing import Optional
+from dataclasses import dataclass, field
+from typing import List, Optional, Set
 
 from rlm.config.settings import settings
 from rlm.core.exceptions import DataLeakageError
 
 logger = logging.getLogger(__name__)
+
+
+# v2.1: Binary file magic bytes
+BINARY_MAGIC_BYTES = {
+    b'\x89PNG': 'PNG image',
+    b'GIF8': 'GIF image',
+    b'\xff\xd8\xff': 'JPEG image',
+    b'PK\x03\x04': 'ZIP archive',
+    b'PK\x05\x06': 'ZIP archive (empty)',
+    b'\x1f\x8b\x08': 'GZIP compressed',
+    b'\x7fELF': 'ELF binary',
+    b'MZ': 'Windows executable',
+    b'%PDF': 'PDF document',
+    b'\xca\xfe\xba\xbe': 'Java class file',
+}
 
 
 # Known secret patterns
@@ -38,6 +58,31 @@ SECRET_PATTERNS = [
     # Bearer tokens
     r"(?i)bearer\s+[a-zA-Z0-9\-_.~+/]+=*",
 ]
+
+
+# v2.1: Allowlist patterns (legitimate high-entropy output)
+ENTROPY_ALLOWLIST_PATTERNS = [
+    r"^[a-fA-F0-9]{32,128}$",  # Hex hashes (MD5, SHA256, etc)
+    r"^[a-zA-Z0-9+/]{20,}={0,2}$",  # Short base64 (if explicitly requested)
+]
+
+
+def detect_binary_output(data: bytes) -> Optional[str]:
+    """
+    Detect if output contains binary file data.
+    
+    v2.1: Prevents leaking encoded binary files.
+    
+    Args:
+        data: Raw bytes to check
+        
+    Returns:
+        File type string if binary detected, None otherwise
+    """
+    for magic, file_type in BINARY_MAGIC_BYTES.items():
+        if data.startswith(magic):
+            return file_type
+    return None
 
 
 def calculate_shannon_entropy(data: str) -> float:
