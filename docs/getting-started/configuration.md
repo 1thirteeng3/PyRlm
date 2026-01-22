@@ -1,108 +1,99 @@
 # Configuration
 
-RLM is configured via environment variables with the `RLM_` prefix or a `.env` file.
+RLM-Python is configured via environment variables.
 
-## Configuration File
+## All Settings
 
-Create a `.env` file in your project root:
+| Variable | Default | Description |
+|----------|---------|-------------|
+| **Docker** |||
+| `RLM_DOCKER_IMAGE` | `python:3.11-slim` | Container image for execution |
+| `RLM_DOCKER_RUNTIME` | `auto` | Runtime: `auto`, `runsc`, or `runc` |
+| `RLM_ALLOW_UNSAFE_RUNTIME` | `0` | Allow execution without gVisor |
+| **Limits** |||
+| `RLM_MEMORY_LIMIT` | `256m` | Memory limit per container |
+| `RLM_CPU_LIMIT` | `0.5` | CPU cores (fractional allowed) |
+| `RLM_PIDS_LIMIT` | `50` | Max processes in container |
+| `RLM_EXECUTION_TIMEOUT` | `30` | Timeout in seconds |
+| **Network** |||
+| `RLM_NETWORK_ENABLED` | `0` | Allow network access (risky!) |
+| **Egress Filtering** |||
+| `RLM_ENTROPY_THRESHOLD` | `4.5` | Shannon entropy for secrets |
+| `RLM_SIMILARITY_THRESHOLD` | `0.8` | Context echo detection |
+| `RLM_MAX_STDOUT_BYTES` | `4000` | Output truncation limit |
+| **LLM** |||
+| `RLM_LLM_PROVIDER` | `openai` | Provider: openai, anthropic, google |
+| `RLM_LLM_MODEL` | `gpt-4` | Model name |
+| `RLM_MAX_RECURSION_DEPTH` | `10` | Max LLM iterations |
+| **Budget** |||
+| `RLM_MAX_BUDGET_DOLLARS` | `1.0` | Maximum spend per run |
 
-```bash
-# API Configuration
-RLM_API_PROVIDER=openai
-RLM_API_KEY=sk-your-api-key
-RLM_MODEL_NAME=gpt-4o
-
-# Execution
-RLM_EXECUTION_MODE=docker
-RLM_DOCKER_RUNTIME=auto
-
-# Safety
-RLM_COST_LIMIT_USD=5.0
-RLM_MAX_RECURSION_DEPTH=5
-```
-
-## All Configuration Options
-
-### API Settings
-
-| Variable | Type | Default | Description |
-|----------|------|---------|-------------|
-| `RLM_API_PROVIDER` | string | `openai` | LLM provider: `openai`, `anthropic`, `google` |
-| `RLM_API_KEY` | string | - | API key for the provider |
-| `RLM_MODEL_NAME` | string | `gpt-4o` | Model name to use |
-
-### Execution Settings
-
-| Variable | Type | Default | Description |
-|----------|------|---------|-------------|
-| `RLM_EXECUTION_MODE` | string | `docker` | `docker` or `local` (dev only) |
-| `RLM_DOCKER_RUNTIME` | string | `auto` | `auto`, `runsc`, or `runc` |
-| `RLM_DOCKER_IMAGE` | string | `python:3.11-slim` | Docker image for sandbox |
-| `RLM_EXECUTION_TIMEOUT` | int | `30` | Timeout in seconds (5-300) |
-
-### Safety Limits
-
-| Variable | Type | Default | Description |
-|----------|------|---------|-------------|
-| `RLM_COST_LIMIT_USD` | float | `5.0` | Max spending per session |
-| `RLM_MAX_RECURSION_DEPTH` | int | `5` | Max code execution iterations |
-| `RLM_MAX_STDOUT_BYTES` | int | `4000` | Max output bytes captured |
-
-### Security Settings
-
-| Variable | Type | Default | Description |
-|----------|------|---------|-------------|
-| `RLM_MEMORY_LIMIT` | string | `512m` | Container memory limit |
-| `RLM_CPU_LIMIT` | float | `1.0` | CPU cores limit (0.1-4.0) |
-| `RLM_PIDS_LIMIT` | int | `50` | Max processes (10-200) |
-| `RLM_NETWORK_ENABLED` | bool | `false` | Enable network (DANGEROUS) |
-
-### Egress Filtering
-
-| Variable | Type | Default | Description |
-|----------|------|---------|-------------|
-| `RLM_ENTROPY_THRESHOLD` | float | `4.5` | Secret detection threshold (3.0-6.0) |
-| `RLM_MIN_ENTROPY_LENGTH` | int | `256` | Min length for entropy check |
-| `RLM_SIMILARITY_THRESHOLD` | float | `0.8` | Context echo threshold (0.5-1.0) |
-
-## Programmatic Configuration
-
-Override settings in code:
+## Configuration via Code
 
 ```python
-from rlm.config import RLMSettings
+from rlm import Orchestrator
+from rlm.core.repl import SandboxConfig
+from rlm.core import OrchestratorConfig
 
-# Create custom settings
-custom_settings = RLMSettings(
-    api_provider="anthropic",
-    api_key="sk-ant-...",
-    model_name="claude-3-sonnet-20240229",
-    cost_limit_usd=10.0,
+# Sandbox configuration
+sandbox_config = SandboxConfig(
+    image="python:3.11-slim",
+    timeout=60,
+    memory_limit="512m",
+    cpu_limit=1.0,
+    network_enabled=False,
+    allow_unsafe_runtime=False,  # Require gVisor
 )
+
+# Orchestrator configuration
+orch_config = OrchestratorConfig(
+    max_iterations=15,
+    raise_on_leak=True,  # Raise exception instead of redacting
+)
+
+# Create with custom configs
+agent = Orchestrator(config=orch_config)
 ```
 
-## Provider-Specific Models
+## Security Configurations
 
-### OpenAI
+### Production (Maximum Security)
 
 ```bash
-RLM_API_PROVIDER=openai
-RLM_MODEL_NAME=gpt-4o          # Recommended
-# RLM_MODEL_NAME=gpt-4-turbo
-# RLM_MODEL_NAME=gpt-4o-mini
+export RLM_DOCKER_RUNTIME=runsc  # Force gVisor
+export RLM_NETWORK_ENABLED=0     # Block network
+export RLM_MEMORY_LIMIT=128m     # Tight limits
+export RLM_EXECUTION_TIMEOUT=15  # Short timeout
 ```
 
-### Anthropic
+### Development (Relaxed)
 
 ```bash
-RLM_API_PROVIDER=anthropic
-RLM_MODEL_NAME=claude-3-sonnet-20240229   # Recommended
-# RLM_MODEL_NAME=claude-3-opus-20240229
+export RLM_ALLOW_UNSAFE_RUNTIME=1  # Allow without gVisor
+export RLM_EXECUTION_TIMEOUT=120   # Longer timeout
+export RLM_MEMORY_LIMIT=512m       # More resources
 ```
 
-### Google
+!!! warning "Never in Production"
+    Never use `RLM_ALLOW_UNSAFE_RUNTIME=1` in production environments.
+
+## Custom Docker Images
+
+To use additional Python packages, create a custom image:
+
+```dockerfile
+FROM python:3.11-slim
+
+# Install your dependencies
+RUN pip install numpy pandas scikit-learn matplotlib
+
+# Keep the image small
+RUN apt-get clean && rm -rf /var/lib/apt/lists/*
+```
+
+Build and use:
 
 ```bash
-RLM_API_PROVIDER=google
-RLM_MODEL_NAME=gemini-1.5-pro   # Recommended
+docker build -t my-rlm-image:latest .
+export RLM_DOCKER_IMAGE=my-rlm-image:latest
 ```

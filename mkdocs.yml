@@ -1,66 +1,88 @@
 site_name: RLM-Python
-site_description: Secure LLM-driven code execution with Docker sandboxing
-site_url: https://rlm-python.readthedocs.io
-repo_name: rlm-python/rlm
-repo_url: https://github.com/rlm-python/rlm
+site_url: https://1thirteeng3.github.io/PyRlm/
+site_description: "Secure LLM-driven code execution with Docker sandboxing and gVisor isolation."
+site_author: "RLM Team"
+repo_url: https://github.com/1thirteeng3/PyRlm
+repo_name: PyRlm
+edit_uri: edit/main/docs/
+
+copyright: Copyright &copy; 2026 RLM Team
 
 theme:
   name: material
-  palette:
-    - scheme: default
-      primary: deep purple
-      accent: purple
-      toggle:
-        icon: material/brightness-7
-        name: Switch to dark mode
-    - scheme: slate
-      primary: deep purple
-      accent: purple
-      toggle:
-        icon: material/brightness-4
-        name: Switch to light mode
+  custom_dir: docs/overrides
   features:
+    - navigation.instant
+    - navigation.tracking
     - navigation.tabs
     - navigation.sections
     - navigation.expand
     - navigation.top
+    - toc.integrate
     - search.suggest
     - search.highlight
     - content.code.copy
     - content.code.annotate
+    - content.action.edit
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: teal
+      accent: purple
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: teal
+      accent: lime
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
   icon:
     repo: fontawesome/brands/github
+    logo: material/shield-lock-outline
+  font:
+    text: Inter
+    code: JetBrains Mono
 
 plugins:
   - search
   - mkdocstrings:
+      default_handler: python
       handlers:
         python:
+          paths: [src]
           options:
-            docstring_style: google
             show_source: true
             show_root_heading: true
-            members_order: source
+            heading_level: 3
+            show_signature_annotations: true
+            separate_signature: true
+  - minify:
+      minify_html: true
 
 markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
   - pymdownx.highlight:
       anchor_linenums: true
       line_spans: __span
       pygments_lang_class: true
   - pymdownx.inlinehilite
   - pymdownx.snippets
-  - pymdownx.superfences:
-      custom_fences:
-        - name: mermaid
-          class: mermaid
-          format: !!python/name:pymdownx.superfences.fence_code_format
   - pymdownx.tabbed:
       alternate_style: true
-  - admonition
-  - pymdownx.details
   - pymdownx.emoji:
       emoji_index: !!python/name:material.extensions.emoji.twemoji
       emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - attr_list
+  - md_in_html
   - tables
   - toc:
       permalink: true
@@ -68,33 +90,35 @@ markdown_extensions:
 nav:
   - Home: index.md
   - Getting Started:
-    - Installation: getting-started/installation.md
     - Quick Start: getting-started/quickstart.md
+    - Installation: getting-started/installation.md
     - Configuration: getting-started/configuration.md
   - User Guide:
-    - Orchestrator: guide/orchestrator.md
-    - Docker Sandbox: guide/sandbox.md
-    - Context Handling: guide/context-handle.md
-    - Egress Filtering: guide/egress-filtering.md
-    - LLM Providers: guide/llm-providers.md
-    - Budget Management: guide/budget.md
+    - Basic Usage: guide/basic-usage.md
+    - Async/Await: guide/async.md
+    - Context Files: guide/context.md
+    - Integrations: guide/integrations.md
   - Security:
     - Architecture: security/architecture.md
     - Best Practices: security/best-practices.md
+    - Egress Filtering: security/egress.md
   - API Reference:
-    - Overview: api/index.md
     - Orchestrator: api/orchestrator.md
-    - DockerSandbox: api/sandbox.md
-    - ContextHandle: api/context-handle.md
-    - EgressFilter: api/egress.md
-    - LLM Clients: api/llm.md
+    - Sandbox: api/sandbox.md
+    - Context Handle: api/context.md
     - Exceptions: api/exceptions.md
+  - Contributing: contributing.md
+  - Changelog: changelog.md
 
 extra:
   social:
     - icon: fontawesome/brands/github
-      link: https://github.com/rlm-python/rlm
+      link: https://github.com/1thirteeng3/PyRlm
     - icon: fontawesome/brands/python
       link: https://pypi.org/project/rlm-python/
+  version:
+    provider: mike
+  generator: false
 
-copyright: Copyright &copy; 2026 RLM Team
+extra_css:
+  - assets/stylesheets/extra.css

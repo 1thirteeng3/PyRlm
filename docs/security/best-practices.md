@@ -1,151 +1,157 @@
 # Security Best Practices
 
-Guidelines for deploying RLM securely in production.
+Deploy RLM securely in production.
 
-## Deployment Checklist
+## The Golden Rules
 
-- [ ] Docker is running with security updates
-- [ ] gVisor (runsc) is installed if on Linux
-- [ ] Network isolation is enabled (`RLM_NETWORK_ENABLED=false`)
-- [ ] Memory limits are configured
-- [ ] API keys are stored securely (not in code)
-- [ ] Budget limits are set appropriately
-- [ ] Egress filtering thresholds are reviewed
+!!! success "Always"
+    - ✅ Use gVisor in production
+    - ✅ Keep `RLM_NETWORK_ENABLED=0`
+    - ✅ Set appropriate resource limits
+    - ✅ Update Docker images regularly
+    - ✅ Monitor execution logs
 
-## API Key Security
+!!! danger "Never"
+    - ❌ Use `allow_unsafe_runtime=True` in production
+    - ❌ Enable network without strong justification
+    - ❌ Run without resource limits
+    - ❌ Ignore egress filter warnings
 
-### ❌ Don't
+## Production Configuration
 
-```python
-# Never hardcode keys
-client = OpenAIClient(api_key="sk-abc123...")
-```
-
-### ✅ Do
-
-```python
-# Use environment variables
-from rlm import settings
-# RLM_API_KEY loaded from .env or environment
-```
-
-### Recommended: Use Secrets Managers
-
-```python
-import os
-from azure.keyvault.secrets import SecretClient
-
-# Load from Azure Key Vault
-secret = keyvault_client.get_secret("rlm-api-key")
-os.environ["RLM_API_KEY"] = secret.value
+```bash
+# Strict security settings
+export RLM_DOCKER_RUNTIME=runsc        # Force gVisor
+export RLM_ALLOW_UNSAFE_RUNTIME=0      # Fail if no gVisor
+export RLM_NETWORK_ENABLED=0           # No network
+export RLM_MEMORY_LIMIT=128m           # Tight limits
+export RLM_CPU_LIMIT=0.25              # Minimal CPU
+export RLM_EXECUTION_TIMEOUT=15        # Short timeout
+export RLM_PIDS_LIMIT=30               # Limit processes
 ```
 
 ## Docker Hardening
 
-### Use Minimal Base Images
-
-```bash
-RLM_DOCKER_IMAGE=python:3.11-slim  # Good
-# Avoid: python:3.11  # Larger attack surface
-```
-
-### Pre-install Dependencies
-
-Since network is disabled, all dependencies must be in the image:
+### Use Minimal Images
 
 ```dockerfile
-# Custom sandbox image
+# ✅ Good: Minimal base
 FROM python:3.11-slim
 
-RUN pip install --no-cache-dir \
-    numpy pandas scipy scikit-learn
-
-# No network access at runtime
+# ❌ Bad: Full base with unnecessary tools
+FROM python:3.11
 ```
 
-### Keep Images Updated
+### Regular Updates
 
 ```bash
+# Update weekly
 docker pull python:3.11-slim
-# Regularly update for security patches
 ```
 
-## Network Considerations
+### Read-Only Root
 
-### Never Enable Network in Production
-
-```bash
-RLM_NETWORK_ENABLED=false  # Must be false
-```
-
-If you need external data:
-1. Pre-fetch data before execution
-2. Mount as read-only volume
-3. Use `ContextHandle` for access
-
-## Logging and Auditing
-
-Log all orchestrator executions:
+RLM already mounts volumes as read-only, but you can add:
 
 ```python
-import logging
-
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("rlm")
-
-# Logs will include:
-# - Code executed
-# - Execution results
-# - Egress filter actions
-# - Cost tracking
+# In SandboxConfig
+read_only=True  # Make container filesystem read-only
 ```
 
-## Rate Limiting
+## Egress Filtering Tuning
 
-Protect against abuse:
+### Raise on Leak
+
+In production, you may want to **fail** instead of redact:
 
 ```python
-from datetime import datetime, timedelta
+from rlm.core import OrchestratorConfig
 
-class RateLimiter:
-    def __init__(self, max_requests=10, window=timedelta(minutes=1)):
-        self.requests = []
-        self.max = max_requests
-        self.window = window
-    
-    def check(self):
-        now = datetime.now()
-        self.requests = [r for r in self.requests if now - r < self.window]
-        if len(self.requests) >= self.max:
-            raise RateLimitError("Too many requests")
-        self.requests.append(now)
+config = OrchestratorConfig(
+    raise_on_leak=True  # Raises DataLeakageError instead of redacting
+)
 ```
 
-## Budget Protection
+### Custom Entropy Threshold
 
-Set conservative limits:
+Lower threshold = more sensitive (more false positives):
 
 ```bash
-RLM_COST_LIMIT_USD=5.0  # Per session
-RLM_MAX_RECURSION_DEPTH=5  # Prevent infinite loops
+# Default: 4.5
+export RLM_ENTROPY_THRESHOLD=4.0  # More sensitive
 ```
 
 ## Monitoring
 
-Track these metrics:
+### Log Analysis
 
-- Execution count per hour
-- Average cost per execution
-- Egress filter triggers
-- Container OOM kills
-- Security test failures
+```python
+import logging
+
+# Enable RLM logging
+logging.getLogger("rlm").setLevel(logging.INFO)
+
+# Watch for these patterns:
+# - "Security runtime 'runsc' detected" ✅
+# - "Using standard 'runc'" ⚠️
+# - "High entropy detected" 🔍
+# - "Secret pattern matched" 🔍
+```
+
+### Metrics to Track
+
+| Metric | Why |
+|--------|-----|
+| Execution time | Detect anomalies |
+| Memory usage | Prevent abuse |
+| Iteration count | Catch infinite loops |
+| Egress filter triggers | Security incidents |
+
+## Network Risks
+
+If you must enable network:
+
+!!! warning "High Risk"
+    Enabling network allows:
+    
+    - Data exfiltration to external servers
+    - Downloading malicious payloads
+    - C2 (Command & Control) communication
+    - Crypto mining pool connections
+
+**Mitigations** (if network required):
+
+1. Use network policies to whitelist specific domains
+2. Monitor egress traffic
+3. Rate limit requests
+4. Use a proxy with logging
 
 ## Incident Response
 
-If a security issue is detected:
+### If You Detect a Leak
 
-1. **Immediately** revoke API keys
+1. **Stop** the orchestrator immediately
 2. **Review** execution logs
-3. **Check** for data exfiltration attempts
-4. **Update** egress filter patterns
-5. **Rotate** all credentials
+3. **Identify** what was leaked
+4. **Rotate** any exposed credentials
+5. **Analyze** how the leak occurred
+
+### If Container Escapes
+
+1. **Isolate** the host
+2. **Capture** forensic data
+3. **Review** gVisor logs (`runsc logs`)
+4. **Report** to gVisor maintainers if it's a new escape
+
+## Security Checklist
+
+Before going live:
+
+- [ ] gVisor installed and tested
+- [ ] `docker run --runtime=runsc hello-world` works
+- [ ] `RLM_ALLOW_UNSAFE_RUNTIME=0`
+- [ ] `RLM_NETWORK_ENABLED=0`
+- [ ] Resource limits set appropriately
+- [ ] Logging enabled
+- [ ] Monitoring in place
+- [ ] Incident response plan documented
