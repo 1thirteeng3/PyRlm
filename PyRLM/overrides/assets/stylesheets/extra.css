@@ -1,0 +1,78 @@
+/* RLM-Python Documentation - Custom Styles */
+
+/* Subtle cyberpunk feel for code blocks in dark mode */
+[data-md-color-scheme="slate"] .highlight {
+  border-left: 3px solid #00bfa5;
+}
+
+[data-md-color-scheme="slate"] .highlight:hover {
+  border-left-color: #1de9b6;
+  box-shadow: 0 0 10px rgba(29, 233, 182, 0.1);
+}
+
+/* Hero section styling */
+.hero h1 {
+  background: linear-gradient(135deg, #00bfa5 0%, #ab47bc 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* Feature cards hover effect */
+.feature {
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+  border-radius: 8px;
+}
+
+.feature:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.1);
+}
+
+[data-md-color-scheme="slate"] .feature:hover {
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+}
+
+/* Demo box styling */
+.demo-box {
+  border: 1px solid var(--md-default-fg-color--lightest);
+}
+
+[data-md-color-scheme="slate"] .demo-box {
+  border-color: #00bfa5;
+  box-shadow: 0 0 20px rgba(0, 191, 165, 0.1);
+}
+
+/* Smooth scrolling */
+html {
+  scroll-behavior: smooth;
+}
+
+/* Better table styling */
+.md-typeset table:not([class]) {
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+/* Announcement bar (optional) */
+.md-announce {
+  background: linear-gradient(135deg, #00897b 0%, #7b1fa2 100%);
+}
+
+/* Footer styling */
+.md-footer {
+  border-top: 1px solid var(--md-default-fg-color--lightest);
+}
+
+/* Admonition icons */
+.md-typeset .admonition.tip {
+  border-left-color: #00bfa5;
+}
+
+.md-typeset .admonition.warning {
+  border-left-color: #ff9800;
+}
+
+.md-typeset .admonition.danger {
+  border-left-color: #f44336;
+}
