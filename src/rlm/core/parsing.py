@@ -39,8 +39,8 @@ def extract_code_blocks(text: str) -> List[CodeBlock]:
     """
     blocks: List[CodeBlock] = []
     
-    with mistletoe.Document(text) as doc:
-        _extract_from_tokens(doc.children, blocks)
+    doc = mistletoe.Document(text)
+    _extract_from_tokens(doc.children, blocks)
     
     return blocks
 

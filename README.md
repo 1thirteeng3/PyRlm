@@ -1,337 +1,169 @@
-<p align="center">
-  <h1 align="center">🛡️ RLM-Python</h1>
-  <p align="center">
-    <strong>Secure Code Execution for AI Agents</strong>
-  </p>
-  <p align="center">
-    Replace unsafe <code>exec()</code> with Docker sandboxes, gVisor isolation, and real-time data leak prevention.
-  </p>
-</p>
+# PyRlm — Reinforcement Learning Models for Cognitive and Agent Architectures
 
-<p align="center">
-  <a href="https://pypi.org/project/rlm-python/"><img src="https://img.shields.io/pypi/v/rlm-python?style=flat-square&color=blue" alt="PyPI Version"></a>
-  <a href="https://pypi.org/project/rlm-python/"><img src="https://img.shields.io/pypi/pyversions/rlm-python?style=flat-square" alt="Python Versions"></a>
-  <a href="https://github.com/1thirteeng3/PyRlm/actions"><img src="https://img.shields.io/github/actions/workflow/status/1thirteeng3/PyRlm/ci-quality.yml?style=flat-square&label=tests" alt="Build Status"></a>
-  <a href="https://github.com/1thirteeng3/PyRlm/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="License"></a>
-  <a href="#security"><img src="https://img.shields.io/badge/security-gVisor%20enabled-success?style=flat-square" alt="gVisor"></a>
-</p>
+[![PyPI](https://img.shields.io/pypi/v/pyrlm.svg)](https://pypi.org/project/pyrlm/)
+[![PyPI - Downloads](https://img.shields.io/pypi/dm/pyrlm.svg)](https://pypi.org/project/pyrlm/)
+[![Python Version](https://img.shields.io/pypi/pyversions/pyrlm.svg)](https://pypi.org/project/pyrlm/)
+[![License](https://img.shields.io/pypi/l/pyrlm.svg)](LICENSE)
+[![Status](https://img.shields.io/badge/status-experimental-orange)](#project-status)
+[![CI](https://img.shields.io/github/actions/workflow/status/1thirteeng3/PyRlm/ci-quality.yml?branch=main&style=flat-square&label=tests)](https://github.com/1thirteeng3/PyRlm/actions/workflows/ci-quality.yml)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.18568094.svg)](https://doi.org/10.5281/zenodo.18568094)
 
----
 
-## 🎬 See It In Action
+PyRlm is an **experimental Python library for Reinforcement Learning Models (RLMs)** focused on exploring learning, decision-making, and control beyond classical Deep Reinforcement Learning pipelines.
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│ $ python demo.py                                                │
-│                                                                 │
-│ 🤖 Agent: Attempting to read environment variables...           │
-│ 📝 Code: import os; print(os.environ.get('API_KEY'))            │
-│                                                                 │
-│ 🛡️ [SECURITY REDACTION: Secret Pattern Detected]                │
-│    Egress filter blocked potential API key exfiltration.        │
-│                                                                 │
-│ 🤖 Agent: Let me calculate fibonacci instead...                 │
-│ 📝 Code: def fib(n): return n if n < 2 else fib(n-1) + fib(n-2) │
-│          print(f"FINAL({fib(10)})")                             │
-│                                                                 │
-│ ✅ Result: 55                                                   │
-└─────────────────────────────────────────────────────────────────┘
-```
+Instead of centering exclusively on optimization algorithms, PyRlm treats Reinforcement Learning as a **modeling paradigm** — enabling experimentation with:
+- cognitive and symbolic abstractions,
+- agent orchestration,
+- controlled and secure execution,
+- hybrid decision systems.
 
-**RLM v3.0**: Blocking data exfiltration in real-time while enabling legitimate computation.
+PyRlm is designed for **research, prototyping, and conceptual exploration**, not as a drop-in replacement for mainstream RL frameworks.
 
 ---
 
-## 🎯 The Problem
+## Installation
 
-Every AI agent framework has the same vulnerability: **unrestricted code execution**.
+```bash
+pip install pyrlm
+```
+
+## Why PyRlm?
+
+Most Reinforcement Learning libraries focus on:
+- algorithmic benchmarks,
+- gradient-based optimization,
+- environment–policy loops tightly coupled to simulators.
+
+PyRlm explores a different axis.
+
+It asks questions such as:
+- What is a Reinforcement Learning Model independent of a specific algorithm?
+- How can agents reason, decide, and act under reinforcement-like dynamics while remaining inspectable?
+- How can learning-driven agents be safely executed, orchestrated, and constrained?
+
+PyRlm is built to support conceptual, architectural, and experimental work at the intersection of:
+- Reinforcement Learning
+- Cognitive architectures
+- Agent systems
+- Symbolic and hybrid AI
+- Secure agent execution
+
+## Core Concepts
+
+PyRlm is organized around a small set of architectural ideas rather than a large collection of algorithms.
+
+### Reinforcement Learning Models (RLM)
+
+In PyRlm, an RLM is treated as a structural model of interaction, not merely an optimizer.
+An RLM may include:
+- reward signals,
+- decision policies,
+- memory or state abstractions,
+- constraints and safety boundaries,
+- execution rules.
+
+This makes PyRlm suitable for non-standard RL formulations.
+
+### Agents and Orchestration
+
+PyRlm supports the construction of agents that:
+- reason over tasks,
+- execute actions programmatically,
+- interact with environments or instructions,
+- operate under explicit control flows.
+
+Agent orchestration is treated as a first-class concern, not an afterthought.
+
+### Secure and Controlled Execution
+
+Executing agent-generated code or actions is inherently risky.
+
+PyRlm includes mechanisms for controlled execution environments, allowing agents to:
+- run code in isolated contexts,
+- respect execution boundaries,
+- reduce unintended side effects.
+
+This is particularly relevant for AI agents interacting with real systems.
+
+## Quick Example
 
 ```python
-# ❌ What most frameworks do (DANGEROUS!)
-exec(llm_generated_code)  # Full access to your system
-
-# ❌ Subprocess isn't better
-subprocess.run(["python", "-c", code])  # Still on your host
-```
-
-**The risks:**
-- 🔓 Access to environment variables (API keys, secrets)
-- 📁 Read/write to your filesystem
-- 🌐 Network requests to exfiltrate data
-- 💣 Fork bombs, crypto miners, ransomware
-
----
-
-## ✅ The Solution: RLM-Python
-
-```python
-# ✅ RLM: Secure by design
-from rlm import Orchestrator
+from pyrlm import Orchestrator
 
 agent = Orchestrator()
-result = await agent.arun("Analyze this data and find trends")
 
-print(result.final_answer)  # Safe output, guaranteed
-```
-
-### Why RLM?
-
-| Feature | `exec()` / `eval()` | LangChain REPL | **RLM v3.0** |
-|---------|:-------------------:|:--------------:|:------------:|
-| **Isolation** | ❌ None (Host) | ⚠️ Limited | ✅ Docker + gVisor |
-| **Network** | 🔓 Open | 🔓 Open | 🔒 Blocked by Default |
-| **Concurrency** | ❌ Blocking | ❌ Blocking | ✅ Native AsyncIO |
-| **Data Leak Prevention** | ❌ None | ❌ None | ✅ Egress Filtering |
-| **Binary Detection** | ❌ None | ❌ None | ✅ Fail-Fast |
-| **Resource Limits** | ❌ None | ❌ None | ✅ Memory/CPU/PIDs |
-
----
-
-## 🚀 Quick Start
-
-### Installation
-
-```bash
-pip install rlm-python
-```
-
-### Prerequisites
-
-> ⚠️ **Docker Engine is required.** RLM executes code in isolated containers.
-
-```bash
-# Verify Docker is running
-docker --version
-```
-
-### Optional: Enable gVisor (Recommended for Production)
-
-gVisor provides kernel-level syscall interception for maximum security.
-
-```bash
-# Install gVisor runtime
-curl -fsSL https://gvisor.dev/archive.key | sudo gpg --dearmor -o /usr/share/keyrings/gvisor-archive-keyring.gpg
-echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/gvisor-archive-keyring.gpg] https://storage.googleapis.com/gvisor/releases release main" | sudo tee /etc/apt/sources.list.d/gvisor.list > /dev/null
-sudo apt-get update && sudo apt-get install -y runsc
-
-# Configure Docker to use gVisor
-sudo runsc install
-sudo systemctl restart docker
-```
-
----
-
-## 💻 Usage Examples
-
-### Modern Async/Await (Recommended)
-
-```python
-import asyncio
-from rlm import Orchestrator
-
-async def main():
-    # Initialize the orchestrator (connects to Docker via aiodocker)
-    agent = Orchestrator()
-    
-    # Execute non-blocking - perfect for web servers
-    result = await agent.arun(
-        "Calculate the first 20 prime numbers and return as a list"
-    )
-    
-    print(f"Success: {result.success}")
-    print(f"Answer: {result.final_answer}")
-    print(f"Iterations: {result.iterations}")
-
-if __name__ == "__main__":
-    asyncio.run(main())
-```
-
-### Synchronous (For Scripts)
-
-```python
-from rlm import Orchestrator
-
-agent = Orchestrator()
-result = agent.run("What is 2 + 2?")
-
-print(result.final_answer)  # "4"
-```
-
-### With Large Context Files (Big Data)
-
-```python
-from rlm import Orchestrator
-
-# Load a 1GB CSV - uses mmap for memory efficiency
-# The LLM never reads the entire file, only snippets
 result = agent.run(
-    query="Find the top 10 customers by revenue",
-    context_path="./sales_data_1gb.csv"
+    task="Solve the task using a reinforcement-based reasoning process",
+    constraints={
+        "time_limit": 5,
+        "safe_execution": True
+    }
 )
+
+print(result)
 ```
 
-### FastAPI Integration
+> **Note:** PyRlm prioritizes clarity and inspectability over raw performance.
 
-```python
-from fastapi import FastAPI
-from rlm import Orchestrator
+## What PyRlm Is Not
 
-app = FastAPI()
-orchestrator = Orchestrator()
+To avoid confusion, PyRlm is not:
+- a high-performance Deep RL training framework,
+- a benchmark-oriented RL library,
+- a replacement for tools like TorchRL, Stable-Baselines, or RLlib.
 
-@app.post("/execute")
-async def execute_code(query: str):
-    # Non-blocking! Other requests proceed while this runs
-    result = await orchestrator.arun(query)
-    return {"answer": result.final_answer}
-```
+Instead, it complements them by focusing on modeling, structure, and experimentation.
 
----
+## Use Cases
 
-## 🔒 Security Architecture
+PyRlm is well-suited for:
+- experimental Reinforcement Learning research,
+- cognitive and symbolic agent modeling,
+- AI agent orchestration and control,
+- safety-aware agent execution,
+- prototyping hybrid learning systems,
+- philosophical and theoretical exploration of RL concepts.
 
-RLM implements **Defense in Depth** with 5 security layers:
+## Project Status
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    YOUR APPLICATION                          │
-├─────────────────────────────────────────────────────────────┤
-│  L5: APPLICATION    │  Egress Filtering                     │
-│                     │  • Shannon entropy detection          │
-│                     │  • Secret pattern matching (API keys) │
-│                     │  • Binary magic byte detection        │
-├─────────────────────────────────────────────────────────────┤
-│  L4: FILESYSTEM     │  Ephemeral Execution                  │
-│                     │  • TemporaryDirectory (auto-cleanup)  │
-│                     │  • Read-only volume mounts            │
-│                     │  • No persistent state                │
-├─────────────────────────────────────────────────────────────┤
-│  L3: NETWORK        │  Air-Gapped by Default                │
-│                     │  • network_mode="none"                │
-│                     │  • Zero outbound connections          │
-├─────────────────────────────────────────────────────────────┤
-│  L2: KERNEL         │  Syscall Interception (gVisor)        │
-│                     │  • Blocks dangerous syscalls          │
-│                     │  • Sandboxed kernel interface         │
-├─────────────────────────────────────────────────────────────┤
-│  L1: CONTAINER      │  Namespace Isolation (Docker)         │
-│                     │  • Memory limits (default: 256MB)     │
-│                     │  • CPU limits (default: 0.5 cores)    │
-│                     │  • PID limits (default: 50)           │
-│                     │  • no-new-privileges                  │
-└─────────────────────────────────────────────────────────────┘
-```
+PyRlm is currently in early-stage development.
 
-### Fail-Closed Policy
+Expect:
+- rapid iteration,
+- evolving APIs,
+- conceptual shifts as research progresses.
 
-RLM **refuses to execute** if gVisor is not detected:
+Stability is secondary to exploration and learning at this stage.
 
-```python
-# This will FAIL if gVisor is not installed
-agent = Orchestrator()
-result = agent.run("print('hello')")  # SecurityViolationError!
+## Roadmap (Indicative)
 
-# Explicit opt-in for reduced security (NOT RECOMMENDED)
-from rlm.core.repl import SandboxConfig
-config = SandboxConfig(allow_unsafe_runtime=True)
-```
+- Expand core RLM abstractions
+- Improve agent orchestration interfaces
+- Add example notebooks and experiments
+- Formalize execution safety layers
+- Explore symbolic and hybrid learning models
+- Improve documentation and theoretical grounding
 
-This is **intentional**. We believe security should be the default, not an option.
+## Contributing
 
----
+Contributions are welcome, especially in:
+- experimental models,
+- architectural discussions,
+- documentation and examples,
+- safety and execution mechanisms.
 
-## ⚙️ Configuration
+If you are interested in Reinforcement Learning beyond standard formulations, PyRlm is an open playground.
 
-Environment variables for customization:
+## Citation
 
-```bash
-# Docker
-RLM_DOCKER_IMAGE=python:3.11-slim
-RLM_DOCKER_RUNTIME=auto  # auto | runsc | runc
+If you use PyRlm in academic work, please cite it using the provided `CITATION.cff` file or via its Zenodo DOI.
 
-# Limits
-RLM_MEMORY_LIMIT=256m
-RLM_CPU_LIMIT=0.5
-RLM_PIDS_LIMIT=50
-RLM_EXECUTION_TIMEOUT=30
+## License
 
-# Security
-RLM_ALLOW_UNSAFE_RUNTIME=0  # Set to 1 to allow without gVisor
-RLM_NETWORK_ENABLED=0       # Set to 1 to enable network (risky!)
+MIT License
 
-# Egress
-RLM_ENTROPY_THRESHOLD=4.5   # Shannon entropy for secret detection
-RLM_MAX_STDOUT_BYTES=4000   # Truncate large outputs
+## Author
 
-# LLM
-RLM_LLM_PROVIDER=openai
-RLM_LLM_MODEL=gpt-4
-OPENAI_API_KEY=sk-...
-```
+Developed and maintained by Giovanni Lemos Barcelos.
 
----
-
-## 📖 Documentation
-
-**[📚 Read the Full Documentation](https://rlm-python.readthedocs.io)**
-
-- [Configuration Reference](https://rlm-python.readthedocs.io/configuration)
-- [Custom Docker Images](https://rlm-python.readthedocs.io/custom-images)
-- [LangChain Integration](https://rlm-python.readthedocs.io/integrations/langchain)
-- [FastAPI Best Practices](https://rlm-python.readthedocs.io/integrations/fastapi)
-
----
-
-## 🗺️ Roadmap
-
-**v3.0** - Stable Release ✅
-
-- [x] DRY Architecture (Single Source of Truth)
-- [x] Strict mistletoe parsing (no regex fallback)
-- [x] TemporaryDirectory for crash-safe cleanup
-- [x] CPU offloading via ThreadPoolExecutor
-- [x] Binary file detection in ContextHandle
-
-**Future**
-
-- [ ] Kubernetes support (K8s Jobs)
-- [ ] Official CrewAI integration
-- [ ] WebAssembly runtime option
-- [ ] Multi-language support (JavaScript, Rust)
-
----
-
-## 🤝 Contributing
-
-We welcome contributions, especially security improvements!
-
-```bash
-# Clone and setup
-git clone https://github.com/1thirteeng3/PyRlm.git
-cd PyRlm
-pip install -e ".[dev]"
-
-# Run tests
-pytest tests/unit/ -v
-
-# Run security tests (requires Docker + gVisor)
-pytest tests/integration/ -v -m security
-```
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
-
----
-
-## 📄 License
-
-MIT License - see [LICENSE](LICENSE) for details.
-
----
-
-<p align="center">
-  <strong>Built with 🛡️ for the AI Agent community</strong>
-  <br>
-  <a href="https://github.com/1thirteeng3/PyRlm">GitHub</a> •
-  <a href="https://pypi.org/project/rlm-python/">PyPI</a> •
-  <a href="https://rlm-python.readthedocs.io">Docs</a>
-</p>
+This project is part of a broader exploration of Reinforcement Learning, cognitive systems, and experimental AI architectures.
