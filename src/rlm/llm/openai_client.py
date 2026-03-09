@@ -1,13 +1,7 @@
-"""
-OpenAI LLM Client.
-
-Provides integration with OpenAI's GPT models (GPT-4, GPT-4o, etc.).
-"""
-
 import logging
-from typing import Iterator, Optional
+from typing import AsyncIterator, Iterator, Optional
 
-from openai import OpenAI
+from openai import AsyncOpenAI, OpenAI
 
 from rlm.core.exceptions import LLMError
 from rlm.llm.base import BaseLLMClient, LLMResponse, Message, TokenUsage
@@ -49,6 +43,7 @@ class OpenAIClient(BaseLLMClient):
         """
         super().__init__(api_key, model, temperature, max_tokens)
         self._client = OpenAI(api_key=api_key, base_url=base_url)
+        self._aclient = AsyncOpenAI(api_key=api_key, base_url=base_url)
 
     @property
     def provider_name(self) -> str:
@@ -94,9 +89,9 @@ class OpenAIClient(BaseLLMClient):
                 content=choice.message.content or "",
                 model=response.model,
                 usage=TokenUsage(
-                    prompt_tokens=usage.prompt_tokens if usage else 0,
-                    completion_tokens=usage.completion_tokens if usage else 0,
-                    total_tokens=usage.total_tokens if usage else 0,
+                    prompt_tokens=getattr(usage, "prompt_tokens", 0) or 0 if usage else 0,
+                    completion_tokens=getattr(usage, "completion_tokens", 0) or 0 if usage else 0,
+                    total_tokens=getattr(usage, "total_tokens", 0) or 0 if usage else 0,
                 ),
                 finish_reason=choice.finish_reason,
                 raw_response=response.model_dump() if hasattr(response, "model_dump") else None,
@@ -151,5 +146,105 @@ class OpenAIClient(BaseLLMClient):
             logger.error(f"OpenAI streaming error: {e}")
             raise LLMError(
                 message=f"OpenAI streaming failed: {e}",
+                provider="openai",
+            ) from e
+
+    async def acomplete(
+        self,
+        messages: list[Message],
+        system_prompt: Optional[str] = None,
+        **kwargs,
+    ) -> LLMResponse:
+        """
+        Generate a completion using OpenAI's API (asynchronous).
+
+        Args:
+            messages: Conversation history
+            system_prompt: Optional system prompt
+            **kwargs: Additional arguments (passed to API)
+
+        Returns:
+            LLMResponse with the generated content
+        """
+        all_messages = []
+
+        if system_prompt:
+            all_messages.append({"role": "system", "content": system_prompt})
+
+        all_messages.extend([m.to_dict() for m in messages])
+
+        try:
+            response = await self._aclient.chat.completions.create(
+                model=self.model,
+                messages=all_messages,
+                temperature=self.temperature,
+                max_tokens=self.max_tokens,
+                **kwargs,
+            )
+
+            choice = response.choices[0]
+            usage = response.usage
+
+            return LLMResponse(
+                content=choice.message.content or "",
+                model=response.model,
+                usage=TokenUsage(
+                    prompt_tokens=getattr(usage, "prompt_tokens", 0) or 0 if usage else 0,
+                    completion_tokens=getattr(usage, "completion_tokens", 0) or 0 if usage else 0,
+                    total_tokens=getattr(usage, "total_tokens", 0) or 0 if usage else 0,
+                ),
+                finish_reason=choice.finish_reason,
+                raw_response=response.model_dump() if hasattr(response, "model_dump") else None,
+            )
+
+        except Exception as e:
+            logger.error(f"OpenAI Async API error: {e}")
+            raise LLMError(
+                message=f"OpenAI Async API request failed: {e}",
+                provider="openai",
+            ) from e
+
+    async def astream(
+        self,
+        messages: list[Message],
+        system_prompt: Optional[str] = None,
+        **kwargs,
+    ) -> AsyncIterator[str]:
+        """
+        Stream a completion from OpenAI (asynchronous).
+
+        Args:
+            messages: Conversation history
+            system_prompt: Optional system prompt
+            **kwargs: Additional arguments
+
+        Yields:
+            Chunks of the generated content
+        """
+        all_messages = []
+
+        if system_prompt:
+            all_messages.append({"role": "system", "content": system_prompt})
+
+        all_messages.extend([m.to_dict() for m in messages])
+
+        try:
+            stream = await self._aclient.chat.completions.create(
+                model=self.model,
+                messages=all_messages,
+                temperature=self.temperature,
+                max_tokens=self.max_tokens,
+                stream=True,
+                **kwargs,
+            )
+
+            async for chunk in stream:
+                if chunk.choices and chunk.choices[0].delta.content:
+                    yield chunk.choices[0].delta.content
+
+        except Exception as e:
+            logger.error(f"OpenAI Async streaming error: {e}")
+            raise LLMError(
+                message=f"OpenAI Async streaming failed: {e}",
                 provider="openai",
             ) from e
