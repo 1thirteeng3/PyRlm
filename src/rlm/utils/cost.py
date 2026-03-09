@@ -99,7 +99,7 @@ class PricingData:
     input_cost_per_million: float
     output_cost_per_million: float
 
-    def calculate_cost(self, input_tokens: int, output_tokens: int) -> float:
+    def calculate_cost(self, input_tokens: Optional[int], output_tokens: Optional[int]) -> float:
         """
         Calculate the cost for a given number of tokens.
 
@@ -110,8 +110,11 @@ class PricingData:
         Returns:
             Total cost in USD
         """
-        input_cost = (input_tokens / 1_000_000) * self.input_cost_per_million
-        output_cost = (output_tokens / 1_000_000) * self.output_cost_per_million
+        in_toks = input_tokens or 0
+        out_toks = output_tokens or 0
+
+        input_cost = (in_toks / 1_000_000) * self.input_cost_per_million
+        output_cost = (out_toks / 1_000_000) * self.output_cost_per_million
         return input_cost + output_cost
 
 
@@ -234,8 +237,8 @@ class BudgetManager:
     def record_usage(
         self,
         model: str,
-        input_tokens: int,
-        output_tokens: int,
+        input_tokens: Optional[int],
+        output_tokens: Optional[int],
         check_limit: bool = True,
     ) -> float:
         """
